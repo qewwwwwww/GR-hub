@@ -812,5 +812,5 @@ end)
 task.wait(1)
 pcall(ScanWeapons)
 pcall(CollectDoors)
-Library:Notify("SCP 功能已加载（默认关闭）", 3)
+Library:Notify("SCP 功能已加载", 3)
 end
