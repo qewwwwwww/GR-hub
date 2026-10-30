@@ -878,9 +878,9 @@ local function MakeESP(p)
 	end)
 end
 
-for _, p in ipairs(Players:GetPlayers()) do task.spawn(function() MakeESP(p) end) end
-Players.PlayerAdded:Connect(function(p) task.wait(0.3); MakeESP(p) end)
-Players.PlayerRemoving:Connect(CleanESP)
+for _, p in ipairs(Players:GetPlayers()) do task.spawn(function() pcall(MakeESP, p) end) end
+TrackConnection(Players.PlayerAdded:Connect(function(p) task.wait(0.3); pcall(MakeESP, p) end))
+TrackConnection(Players.PlayerRemoving:Connect(function(p) pcall(CleanESP, p) end))
 
 local function ComputeBoundingBox(char, cam)
 	local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
@@ -1729,7 +1729,24 @@ cR:AddSlider("scpCd", { Text = "射击冷却", Default = SHOOT_CD, Min = 0.012, 
 cR:AddButton({ Text = "立即扫描武器", Func = function() pcall(ScanWeapons); Library:Notify("已扫描武器", 3) end })
 local EspTab = Window:AddTab("透视", "eye")
 local eL = EspTab:AddLeftGroupbox("ESP", "eye")
-eL:AddToggle("scpEsp", { Text = "ESP透视", Default = false, Callback = function(v) espEnabled = v end })
+eL:AddToggle("scpEsp", {
+	Text = "ESP透视",
+	Default = false,
+	Callback = function(v)
+		espEnabled = v
+		if v then
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p ~= player then
+					task.spawn(function() pcall(MakeESP, p) end)
+				end
+			end
+		else
+			for p in pairs(ESP) do
+				pcall(CleanESP, p)
+			end
+		end
+	end,
+})
 local FunTab = Window:AddTab("娱乐", "smile")
 local fL = FunTab:AddLeftGroupbox("娱乐功能", "zap")
 local fR = FunTab:AddRightGroupbox("刷钱", "dollar-sign")
@@ -1742,5 +1759,5 @@ local WlTab = Window:AddTab("白名单", "shield")
 local wL = WlTab:AddLeftGroupbox("白名单管理", "user")
 wL:AddInput("scpWl", { Text = "添加白名单", Default = "", Placeholder = "输入玩家名", Finished = true, Callback = function(v) if v and v ~= "" then addWL(v) end end })
 wL:AddButton({ Text = "清空白名单", Func = function() for n in pairs(WL) do WL[n] = nil end; Library:Notify("白名单已清空", 3) end })
-Library:Notify("SCP 功能已加载（默认关闭）", 3)
+Library:Notify("SCP 功能已加载", 3)
 end
