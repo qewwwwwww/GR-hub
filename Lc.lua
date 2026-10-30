@@ -113,6 +113,7 @@ if workspace.MapContainer and workspace.MapContainer.Special then
 NPC_ROOT = workspace.MapContainer.Special:FindFirstChild("NPC_Container")
 end
 end)
+local BOT_KEYWORDS = { "bot", "npc", "dummy", "mob_", "zombie", "monster", "ai", "summon", "minion" }
 local NPC_KEYS = { "bot", "npc", "dummy", "ai", "summon", "minion" }
 local running = false
 local state = "IDLE"
@@ -208,12 +209,18 @@ Callback = function(v) TEAM_CHECK = v end,
 aL:AddToggle("swBots", {
 Text = "攻击Bot",
 Default = false,
-Callback = function(v) ATTACK_BOTS = v end,
+Callback = function(v)
+ATTACK_BOTS = v
+requestScan()
+end,
 })
 aL:AddToggle("swPlr", {
 Text = "攻击玩家",
 Default = false,
-Callback = function(v) ATTACK_PLAYERS = v end,
+Callback = function(v)
+ATTACK_PLAYERS = v
+requestScan()
+end,
 })
 aR:AddSlider("sldLock", {
 Text = "锁定时间",
@@ -243,6 +250,7 @@ Suffix = " studs",
 Callback = function(v)
 MAX_DIST = v
 if updateLockUIMaxDistance then updateLockUIMaxDistance() end
+requestScan()
 end,
 })
 local rL = AimTab:AddLeftGroupbox("射线设置", "eye")
@@ -257,6 +265,7 @@ Default = false,
 Callback = function(v)
 RAY_ENABLED = v
 _losCache = setmetatable({}, { __mode = "k" })
+requestScan()
 end,
 })
 rL:AddDropdown("ddPart", {
@@ -447,6 +456,16 @@ local mt, pt = lp.Team, p.Team
 if mt and pt then return mt == pt end
 return lp.TeamColor == p.TeamColor
 end
+local function isBotModel(model)
+if not model or not model:IsA("Model") then return false end
+if Players:GetPlayerFromCharacter(model) then return false end
+local name = model.Name and model.Name:lower() or ""
+for _, kw in ipairs(BOT_KEYWORDS) do
+if name:find(kw) then return true end
+end
+if model:FindFirstChildOfClass("Humanoid") then return true end
+return false
+end
 local function isNPC(c)
 if not c then return false end
 local cached = _isNpc[c]
@@ -463,6 +482,7 @@ if string.find(name, k, 1, true) then res = true; break end
 end
 if not res then res = humOf(c) ~= nil end
 end
+if not res then res = isBotModel(c) end
 _isNpc[c] = res
 return res
 end
@@ -485,7 +505,23 @@ end
 local function teamAttrOf(c)
 if not c then return nil end
 local ok, v = pcall(function() return c:GetAttribute("Team") end)
-if ok and type(v) == "string" then return v end
+if ok and type(v) == "string" and v ~= "" then return v end
+ok, v = pcall(function() return c:GetAttribute("TeamName") end)
+if ok and type(v) == "string" and v ~= "" then return v end
+ok, v = pcall(function() return c:GetAttribute("Faction") end)
+if ok and type(v) == "string" and v ~= "" then return v end
+local hum = humOf(c)
+if hum then
+ok, v = pcall(function() return hum:GetAttribute("Team") end)
+if ok and type(v) == "string" and v ~= "" then return v end
+ok, v = pcall(function() return hum:GetAttribute("TeamName") end)
+if ok and type(v) == "string" and v ~= "" then return v end
+end
+local par = c.Parent
+if par and par:IsA("Instance") then
+local pn = par.Name
+if pn == "Attackers" or pn == "Defenders" then return pn end
+end
 return nil
 end
 local function isPVERound()
@@ -497,17 +533,20 @@ return false
 end
 local function localAreEnemies(myPlayer, c)
 ensureTeams()
+local p = playerOf(c)
+if not p and isPVERound() then return true end
 if workspace:GetAttribute("Round_Truce") then
-if isPVERound() and not playerOf(c) then return true end
+if not p and isPVERound() then return true end
 return false
 end
 if workspace:GetAttribute("Round_FriendlyFire") then return true end
 local myTeam = myPlayer.Team
-local p = playerOf(c)
 if p then
 return myTeam ~= p.Team
 end
 local t = teamAttrOf(c)
+local myName = myTeam and myTeam.Name or nil
+if t and myName then return t ~= myName end
 if _teamAttackers and myTeam == _teamAttackers then return t ~= "Attackers" end
 if _teamDefenders and myTeam == _teamDefenders then return t ~= "Defenders" end
 return false
@@ -518,10 +557,12 @@ if not c then return false end
 local v = _enemyCache[c]
 if v ~= nil then return v end
 local res
+local p = playerOf(c)
+if p then
 if PlayerUtility and type(PlayerUtility.AreEnemies) == "function" then
-local other = playerOf(c) or c
-local ok, r = pcall(function() return PlayerUtility:AreEnemies(lp, other) end)
+local ok, r = pcall(function() return PlayerUtility:AreEnemies(lp, p) end)
 if ok and type(r) == "boolean" then res = r end
+end
 end
 if res == nil then res = localAreEnemies(lp, c) end
 _enemyCache[c] = res
@@ -536,11 +577,14 @@ workspace:GetAttributeChangedSignal("Round_FriendlyFire"):Connect(invalidateTeam
 lp:GetPropertyChangedSignal("Team"):Connect(invalidateTeamCache)
 end)
 local function canAttack(c)
-if TEAM_CHECK and not isEnemyChar(c) then return false end
+if not c then return false end
 if c:GetAttribute("Immortal") then return false end
 if c:GetAttribute("epoch") then return false end
-if playerOf(c) then return ATTACK_PLAYERS end
-return isNPC(c) and ATTACK_BOTS
+if TEAM_CHECK and not isEnemyChar(c) then return false end
+local plr = playerOf(c)
+if plr then return ATTACK_PLAYERS end
+if isNPC(c) then return ATTACK_BOTS end
+return false
 end
 local function hasMuzzle(tool)
 if not tool then return false end
@@ -1504,7 +1548,7 @@ if d:IsA("Model") then poolRemove(_npcChars, _npcSet, d) end
 end)
 end
 Workspace.DescendantAdded:Connect(function(d)
-if d:IsA("Model") and isNPC(d) then addNpcModel(d) end
+if d:IsA("Model") and isBotModel(d) then addNpcModel(d) end
 end)
 Workspace.DescendantRemoving:Connect(function(d)
 if d:IsA("Model") then poolRemove(_npcChars, _npcSet, d) end
@@ -1556,6 +1600,7 @@ return n
 end
 local _scanQueue = {}
 local _scanIdx = 1
+local _lastFullScan = 0
 local function refreshNpcPool()
 if BOT_FOLDER then
 pcall(function()
@@ -1577,6 +1622,20 @@ end
 end
 end
 end)
+local now = os.clock()
+if now - _lastFullScan >= 1 then
+_lastFullScan = now
+pcall(function()
+for _, desc in ipairs(Workspace:GetDescendants()) do
+if desc:IsA("Humanoid") then
+local m = desc.Parent
+if m and m:IsA("Model") and isBotModel(m) then
+poolAdd(_npcChars, _npcSet, m)
+end
+end
+end
+end)
+end
 end
 local function rebuildScanQueue()
 refreshNpcPool()
@@ -1876,5 +1935,5 @@ state = "IDLE"
 end
 end
 end)
-Library:Notify("莱克星顿与康科德 已加载", 3)
+Library:Notify("GR 功能已加载（默认关闭）", 3)
 end
