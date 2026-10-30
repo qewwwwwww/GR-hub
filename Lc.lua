@@ -1876,5 +1876,5 @@ state = "IDLE"
 end
 end
 end)
-Library:Notify("GR 功能已加载（默认关闭）", 3)
+Library:Notify("莱克星顿与康科德 已加载", 3)
 end
