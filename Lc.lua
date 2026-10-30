@@ -113,6 +113,26 @@ if workspace.MapContainer and workspace.MapContainer.Special then
 NPC_ROOT = workspace.MapContainer.Special:FindFirstChild("NPC_Container")
 end
 end)
+local EXCLUDE_ROOT = nil
+pcall(function()
+local sp = workspace.MapContainer and workspace.MapContainer.Special
+if sp then
+local nd = sp:FindFirstChild("NPC_Data")
+if nd then EXCLUDE_ROOT = nd:FindFirstChild("RigContainers") end
+end
+end)
+local _excludeCache = setmetatable({}, { __mode = "k" })
+local function isExcludedModel(m)
+if not m then return false end
+local v = _excludeCache[m]
+if v ~= nil then return v end
+local res = false
+if EXCLUDE_ROOT and m:IsDescendantOf(EXCLUDE_ROOT) then
+res = true
+end
+_excludeCache[m] = res
+return res
+end
 local BOT_KEYWORDS = { "bot", "npc", "dummy", "mob_", "zombie", "monster", "ai", "summon", "minion" }
 local NPC_KEYS = { "bot", "npc", "dummy", "ai", "summon", "minion" }
 local running = false
@@ -459,6 +479,7 @@ end
 local function isBotModel(model)
 if not model or not model:IsA("Model") then return false end
 if Players:GetPlayerFromCharacter(model) then return false end
+if isExcludedModel(model) then return false end
 local name = model.Name and model.Name:lower() or ""
 for _, kw in ipairs(BOT_KEYWORDS) do
 if name:find(kw) then return true end
@@ -471,6 +492,7 @@ if not c then return false end
 local cached = _isNpc[c]
 if cached ~= nil then return cached end
 if playerOf(c) then _isNpc[c] = false; return false end
+if isExcludedModel(c) then _isNpc[c] = false; return false end
 if _botSet[c] then _isNpc[c] = true; return true end
 local res = false
 if NPC_ROOT and c:IsDescendantOf(NPC_ROOT) then
@@ -1461,6 +1483,7 @@ local function addNpcModel(m)
 if not m or not m:IsA("Model") then return false end
 if playerOf(m) then return false end
 if m == lp.Character then return false end
+if isExcludedModel(m) then return false end
 if poolAdd(_npcChars, _npcSet, m) then onNewCandidate(); return true end
 return false
 end
@@ -1602,10 +1625,16 @@ local _scanQueue = {}
 local _scanIdx = 1
 local _lastFullScan = 0
 local function refreshNpcPool()
+for i = #_npcChars, 1, -1 do
+local m = _npcChars[i]
+if isExcludedModel(m) then
+poolRemove(_npcChars, _npcSet, m)
+end
+end
 if BOT_FOLDER then
 pcall(function()
 for _, ov in ipairs(BOT_FOLDER:GetChildren()) do
-if ov:IsA("ObjectValue") and ov.Value and ov.Value:IsA("Model") then
+if ov:IsA("ObjectValue") and ov.Value and ov.Value:IsA("Model") and not isExcludedModel(ov.Value) then
 _botSet[ov.Value] = true
 poolAdd(_npcChars, _npcSet, ov.Value)
 end
@@ -1616,7 +1645,7 @@ pcall(function()
 for _, h in ipairs(CollectionService:GetTagged(TAG_DYN)) do
 if h.Health > 0 then
 local m = h.Parent
-if m and m:IsA("Model") and not playerOf(m) then
+if m and m:IsA("Model") and not playerOf(m) and not isExcludedModel(m) then
 poolAdd(_npcChars, _npcSet, m)
 end
 end
