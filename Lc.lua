@@ -357,6 +357,66 @@ if requestScan then requestScan() end
 Library:Notify("已恢复默认", 3)
 end,
 })
+local cooldownGui = Instance.new("ScreenGui")
+cooldownGui.Name = "GRCooldownBar"
+cooldownGui.ResetOnSpawn = false
+cooldownGui.IgnoreGuiInset = true
+cooldownGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+pcall(function()
+cooldownGui.Parent = lp:WaitForChild("PlayerGui")
+end)
+local barFrame = Instance.new("Frame")
+barFrame.Name = "BarFrame"
+barFrame.Size = UDim2.new(0, 260, 0, 14)
+barFrame.Position = UDim2.new(0.5, -130, 1, -100)
+barFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+barFrame.BackgroundTransparency = 0.4
+barFrame.BorderSizePixel = 0
+barFrame.Visible = false
+barFrame.Parent = cooldownGui
+local barCorner = Instance.new("UICorner")
+barCorner.CornerRadius = UDim.new(0, 4)
+barCorner.Parent = barFrame
+local barFill = Instance.new("Frame")
+barFill.Name = "Fill"
+barFill.Size = UDim2.new(0, 0, 1, 0)
+barFill.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
+barFill.BorderSizePixel = 0
+barFill.Parent = barFrame
+local fillCorner = Instance.new("UICorner")
+fillCorner.CornerRadius = UDim.new(0, 4)
+fillCorner.Parent = barFill
+local barText = Instance.new("TextLabel")
+barText.Name = "Text"
+barText.Size = UDim2.new(1, 0, 1, 0)
+barText.BackgroundTransparency = 1
+barText.TextColor3 = Color3.fromRGB(255, 255, 255)
+barText.Font = Enum.Font.GothamBold
+barText.TextSize = 11
+barText.Text = ""
+barText.Parent = barFrame
+local function updateCooldownBar()
+if not running then
+barFrame.Visible = false
+return
+end
+barFrame.Visible = true
+local now = os.clock()
+if state == "RELOAD" then
+local remain = reloadUntil - now
+if remain < 0 then remain = 0 end
+local ratio = 1 - (remain / RELOAD_TIME)
+if ratio < 0 then ratio = 0 end
+if ratio > 1 then ratio = 1 end
+barFill.Size = UDim2.new(ratio, 0, 1, 0)
+barFill.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
+barText.Text = string.format("换弹冷却 %.1fs", remain)
+else
+barFill.Size = UDim2.new(1, 0, 1, 0)
+barFill.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
+barText.Text = "可射击"
+end
+end
 local _playerOf = setmetatable({}, { __mode = "k" })
 local _humOf = setmetatable({}, { __mode = "k" })
 local _isNpc = setmetatable({}, { __mode = "k" })
@@ -1265,8 +1325,7 @@ end
 end
 _losSource = originTag
 local part, ready = findVisiblePart(origin, targetModel, params)
-if not ready then
-else
+if ready then
 _aimPick[targetModel] = part
 end
 _losCache[targetModel] = {
@@ -1579,6 +1638,17 @@ local shootDir = tH.Position - origin
 if shootDir.Magnitude < 0.001 then return false end
 shootDir = shootDir.Unit
 local stamp = nowStamp()
+pcall(function()
+local shootSound = Instance.new("Sound")
+shootSound.SoundId = "rbxassetid://8679627751"
+shootSound.Volume = 1
+shootSound.PlayOnRemove = false
+shootSound.Parent = Workspace
+shootSound:Play()
+task.delay(3, function()
+pcall(shootSound.Destroy, shootSound)
+end)
+end)
 if FX_ENABLED then
 local tracerStart
 local hrp = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
@@ -1655,7 +1725,32 @@ _scanRefreshAt = 0
 end
 local _lastFireTime = 0
 local _MIN_FIRE_INTERVAL = 3.0
+local function hookMyDeath(c)
+if not c then return end
+local hum = c:FindFirstChildOfClass("Humanoid") or c:WaitForChild("Humanoid", 5)
+if not hum then return end
+hum.Died:Connect(function()
+reloadUntil = 0
+state = "IDLE"
+clearAllLockUI()
+target = nil
+_targetReady = false
+_lockStart = 0
+_losLostAt = 0
+_lastLosTime = 0
+_lastVerifyTime = 0
+_lastFireTime = 0
+_scanValid = false
+_scanRefreshAt = 0
+end)
+end
+if lp.Character then hookMyDeath(lp.Character) end
+lp.CharacterAdded:Connect(function(c)
+task.wait(0.3)
+hookMyDeath(c)
+end)
 RunService.Heartbeat:Connect(function(dt)
+updateCooldownBar()
 if not running then return end
 local now = os.clock()
 if state == "IDLE" then
