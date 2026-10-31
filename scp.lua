@@ -1869,7 +1869,7 @@ task.spawn(function()
 	while true do
 		task.wait(REFRESH_INTERVAL)
 		local myHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		if not myHRP then goto continue_loop end
+		if not myHRP then continue end
 
 		local myPos = myHRP.Position
 		local enemyCount, violateCount, escapeCount, invincibleCount = 0, 0, 0, 0
@@ -1877,15 +1877,15 @@ task.spawn(function()
 		local enemyLines = {}
 
 		for _, p in ipairs(Players:GetPlayers()) do
-			if p == player or not p.Character then goto next_pl end
+			if p == player or not p.Character then continue end
 			local hrp = p.Character:FindFirstChild("HumanoidRootPart")
-			if not hrp then goto next_pl end
+			if not hrp then continue end
 
 			local d = (hrp.Position - myPos).Magnitude
-			if d > MAX_RANGE then goto next_pl end 
+			if d > MAX_RANGE then continue end 
 
 			local hu = p.Character:FindFirstChildOfClass("Humanoid")
-			if not hu or hu.Health <= 0 then goto next_pl end
+			if not hu or hu.Health <= 0 then continue end
 
 			if IsEnemy(p) then enemyCount = enemyCount + 1 end
 			if IsHostile(p) then violateCount = violateCount + 1 end
@@ -1931,7 +1931,6 @@ task.spawn(function()
 				end
 			end
 
-			::next_pl::
 		end
 
 		if statusLabel then
@@ -1965,7 +1964,6 @@ task.spawn(function()
 			setLabel(playerListLabel, table.concat(allLines, "\n"))
 		end
 
-		::continue_loop::
 	end
 end)
 
@@ -2061,11 +2059,11 @@ GHub.RegisterTab("娱乐", FunTab)
 GHub.RegisterTab("白名单", WLTab)
 end
 if type(GHub.Notify) == "function" then
-GHub.Notify("SCP 功能已加载", 3)
+GHub.Notify("SCP 功能已加载（默认关闭）", 3)
 else
-Library:Notify("SCP 功能已加载", 3)
+Library:Notify("SCP 功能已加载（默认关闭）", 3)
 end
 return info
 end
-Library:Notify("SCP 功能已加载", 3)
+Library:Notify("SCP 功能已加载（默认关闭）", 3)
 end
