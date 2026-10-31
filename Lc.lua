@@ -114,13 +114,14 @@ NPC_ROOT = workspace.MapContainer.Special:FindFirstChild("NPC_Container")
 end
 end)
 local EXCLUDE_ROOTS = {}
+local EXCLUDE_MODEL_ROOTS = {}
 pcall(function()
 local mc = workspace.MapContainer
 if mc then
 local sp = mc:FindFirstChild("Special")
 if sp then
 local nd = sp:FindFirstChild("NPC_Data")
-if nd then EXCLUDE_ROOTS[#EXCLUDE_ROOTS + 1] = nd end
+if nd then EXCLUDE_MODEL_ROOTS[#EXCLUDE_MODEL_ROOTS + 1] = nd end
 end
 local misc = mc:FindFirstChild("Miscellaneous")
 if misc then
@@ -139,6 +140,14 @@ for _, root in ipairs(EXCLUDE_ROOTS) do
 if m:IsDescendantOf(root) then
 res = true
 break
+end
+end
+if not res and m:IsA("Model") then
+for _, root in ipairs(EXCLUDE_MODEL_ROOTS) do
+if m:IsDescendantOf(root) then
+res = true
+break
+end
 end
 end
 _excludeCache[m] = res
