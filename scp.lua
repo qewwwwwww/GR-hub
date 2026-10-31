@@ -1,6 +1,9 @@
 return function(Library, Window, GHub)
-local genv = (type(getgenv) == "function") and getgenv() or _G
-GHub = GHub or genv.GRHub
+local genv = getgenv()
+if type(GHub) ~= "table" then
+GHub = type(genv) == "table" and genv.GRHub or nil
+end
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -42,17 +45,19 @@ local MELEE_RANGE = 8
 local SHOOT_CD = 0.087
 local MELEE_CD = 0.150
 local MELEE_INTERVAL = 0.035
-local MAX_SHOOTS_PER_FRAME = 2
-local autoShoot = false
-local autoMelee = false
-local rayEnabled = false
-local drawCircle = false
-local attackEscapedD = false
-local espEnabled = false
+local MAX_SHOOTS_PER_FRAME = 2 
+local autoShoot = true
+local autoMelee = true
+local rayEnabled = true
+local drawCircle = true
+local attackEscapedD = true
+local espEnabled = true
 local funMode = false
 local silentMode = false
 local invincibleCheck = true
-local drawBeams = false
+local drawBeams = true
+local CreateCircle, DestroyCircle
+local Unload
 
 local FOUNDATION = { scientist = true, security = true, mtf = true, director = true }
 local CHAOS = { chaos_insurgency = true, rogue_agent = true, traitor = true, renegade = true }
@@ -108,7 +113,7 @@ local function IsHostile(p)
 	if not w then return false end
 	local h = w:FindFirstChild("Hostile")
 	if not h then return false end
-	return h.Visible == true
+	return h.Visible == true 
 end
 
 local function IsEscaped(p)
@@ -116,10 +121,10 @@ local function IsEscaped(p)
 	if not w then return false end
 	local e = w:FindFirstChild("Escaped")
 	if not e then return false end
-	return e.Visible == true
+	return e.Visible == true 
 end
 
-local invincibleUntil = setmetatable({}, { __mode = "k" })
+local invincibleUntil = setmetatable({}, { __mode = "k" }) 
 
 local function CheckForceFieldExists(p)
 	if not p then return false end
@@ -256,12 +261,10 @@ local function GetEquippedWeaponName()
 end
 
 local function HasRanged()
-
 	local equipped = GetEquippedWeaponName()
 	if equipped and IsRanged(equipped) then
 		return true, IsShotgun(equipped)
 	end
-
 	for _,id in ipairs(WepList) do
 		if IsRanged(WepNames[id]) then
 			return true, IsShotgun(WepNames[id])
@@ -307,7 +310,7 @@ if player.Character then
 	ScanWeapons()
 end
 
-local ignoreCache = { list = {}, char = nil, backpack = nil, dirty = true }
+local ignoreCache = { list = {}, char = nil, backpack = nil, dirty = true } 
 
 local function MarkIgnoreDirty()
 	ignoreCache.dirty = true
@@ -319,7 +322,7 @@ local function BuildIgnore()
 	end
 
 	local ig = ignoreCache.list
-	table.clear(ig)
+	table.clear(ig) 
 
 	local char = player.Character
 	if char then
@@ -367,7 +370,7 @@ losParams.IgnoreWater = true
 local function HasLineOfSight(from, char)
 	local hrp = char:FindFirstChild("HumanoidRootPart")
 	if not hrp then return false end
-	losParams.FilterDescendantsInstances = BuildIgnore()
+	losParams.FilterDescendantsInstances = BuildIgnore() 
 	local dir = (hrp.Position - from).Unit
 	local dist = (hrp.Position - from).Magnitude
 	local result = Workspace:Raycast(from, dir * dist, losParams)
@@ -425,20 +428,17 @@ local MAX_ACTIVE_BEAMS = 30
 local MAX_POOL_SIZE = 60
 local activeBeams = {}
 local beamPool = {}
-local beamSpawnCount = 0
+local beamSpawnCount = 0 
 
 local function GetBeamPart()
-
 	if #beamPool > 0 then
 		local p = table.remove(beamPool)
 		if p and not p.Parent then
 			return p
 		elseif p then
-
 			pcall(function() p:Destroy() end)
 		end
 	end
-
 	local p = Instance.new("Part")
 	p.Anchored = true
 	p.CanCollide = false
@@ -455,7 +455,6 @@ local function RecycleBeamPart(p)
 	if p and p.Parent then
 		p.Parent = nil
 	end
-
 	if #beamPool >= MAX_POOL_SIZE then
 		pcall(function() p:Destroy() end)
 		return
@@ -480,7 +479,7 @@ local function DrawBulletTrail(from, to)
 	if not drawBeams then return end
 
 	if #activeBeams >= MAX_ACTIVE_BEAMS then return end
-	if beamSpawnCount >= MAX_ACTIVE_BEAMS * 2 then return end
+	if beamSpawnCount >= MAX_ACTIVE_BEAMS * 2 then return end 
 
 	local dir = to - from
 	local dist = dir.Magnitude
@@ -515,9 +514,9 @@ end
 
 local CircleParts = {}
 local circleValid = false
-local MAX_CIRCLE_PARTS = 22
+local MAX_CIRCLE_PARTS = 22 
 
-local function DestroyCircle()
+DestroyCircle = function()
 	for _, p in ipairs(CircleParts) do
 		pcall(function()
 			if p and p.Parent then p:Destroy() end
@@ -527,8 +526,7 @@ local function DestroyCircle()
 	circleValid = false
 end
 
-local function CreateCircle()
-
+CreateCircle = function()
 	DestroyCircle()
 
 	if not drawCircle then return end
@@ -552,13 +550,11 @@ local function UpdateCircle()
 	if not drawCircle then DestroyCircle(); return end
 	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 	if not hrp then DestroyCircle(); return end
-
 	if not circleValid or #CircleParts ~= MAX_CIRCLE_PARTS then
 		CreateCircle()
 		return
 	end
 	for i, pt in ipairs(CircleParts) do
-
 		if not pt or not pt.Parent then
 			circleValid = false
 			CreateCircle()
@@ -728,8 +724,7 @@ local RoleColors = {
 }
 
 local ESP = {}
-local espBuilding = {}
-local charPartsCache = setmetatable({}, { __mode = "kv" })
+local charPartsCache = setmetatable({}, { __mode = "kv" }) 
 
 local allConnections = {}
 
@@ -741,9 +736,8 @@ end
 local function GetCharParts(char)
 	local cached = charPartsCache[char]
 	if cached then
-
 		local valid = true
-		for i = 1, math.min(#cached, 3) do
+		for i = 1, math.min(#cached, 3) do 
 			if not cached[i] or not cached[i].Parent then
 				valid = false
 				break
@@ -752,7 +746,6 @@ local function GetCharParts(char)
 		if valid then
 			return cached
 		end
-
 		charPartsCache[char] = nil
 	end
 	local parts = {}
@@ -773,7 +766,6 @@ local function CleanESP(p)
 		pcall(function()
 			if ESP[p].sg and ESP[p].sg.Parent then ESP[p].sg:Destroy() end
 		end)
-
 		if ESP[p].connections then
 			for _, conn in ipairs(ESP[p].connections) do
 				pcall(function() conn:Disconnect() end)
@@ -788,8 +780,7 @@ local function CleanESP(p)
 end
 
 local function MakeESP(p)
-	if p == player or ESP[p] or espBuilding[p] then return end
-	espBuilding[p] = true
+	if p == player or ESP[p] then return end
 
 	local charConns = {}
 
@@ -809,17 +800,15 @@ local function MakeESP(p)
 		local char = p.Character or p.CharacterAdded:Wait()
 		local hrp = char:WaitForChild("HumanoidRootPart", 5)
 		local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
-		if not hrp or not hum then espBuilding[p] = nil; return end
+		if not hrp or not hum then return end
 
-		if ESP[p] then espBuilding[p] = nil; return end
+		if ESP[p] then return end
 
 		local sg = Instance.new("ScreenGui")
 		sg.Name = "ESP_" .. p.Name
 		sg.ResetOnSpawn = false; sg.Enabled = true
 		sg.IgnoreGuiInset = true; sg.DisplayOrder = 109
-		local pg = player:FindFirstChild("PlayerGui")
-		if not pg then pg = player:WaitForChild("PlayerGui", 5) end
-		sg.Parent = pg
+		sg.Parent = player:WaitForChild("PlayerGui")
 
 		local box = Instance.new("Frame")
 		box.Name = "Box"; box.BackgroundTransparency = 1; box.BorderSizePixel = 0; box.Parent = sg
@@ -850,7 +839,6 @@ local function MakeESP(p)
 
 		local espData = { sg = sg, Box = box, Stroke = stroke, Grad = grad, HpBg = hpBg, HpFill = hpFill, Dist = distL, Hum = hum, Char = char, HRP = hrp, connections = {} }
 		ESP[p] = espData
-		espBuilding[p] = nil
 
 		table.insert(espData.connections, TrackConnection(hum.HealthChanged:Connect(function(hp)
 			if not hpFill or not hpFill.Parent then return end
@@ -885,9 +873,9 @@ local function MakeESP(p)
 	end)
 end
 
-for _, p in ipairs(Players:GetPlayers()) do task.spawn(function() pcall(MakeESP, p) end) end
-TrackConnection(Players.PlayerAdded:Connect(function(p) task.wait(0.3); pcall(MakeESP, p) end))
-TrackConnection(Players.PlayerRemoving:Connect(function(p) pcall(CleanESP, p) end))
+for _, p in ipairs(Players:GetPlayers()) do task.spawn(function() MakeESP(p) end) end
+Players.PlayerAdded:Connect(function(p) task.wait(0.3); MakeESP(p) end)
+Players.PlayerRemoving:Connect(CleanESP)
 
 local function ComputeBoundingBox(char, cam)
 	local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
@@ -898,8 +886,8 @@ local function ComputeBoundingBox(char, cam)
 
 	local points = { hrp.Position }
 	if head then table.insert(points, head.Position) end
-	table.insert(points, hrp.Position + Vector3.new(0, 3.5, 0))
-	table.insert(points, hrp.Position - Vector3.new(0, 2.5, 0))
+	table.insert(points, hrp.Position + Vector3.new(0, 3.5, 0)) 
+	table.insert(points, hrp.Position - Vector3.new(0, 2.5, 0)) 
 
 	local rightVec = cam.CFrame.RightVector * 1.2
 	table.insert(points, hrp.Position + rightVec)
@@ -920,24 +908,12 @@ local function ComputeBoundingBox(char, cam)
 	return minX, minY, maxX, maxY
 end
 
-local ESP_FRAME_BUDGET = 3
-
-local espEnsureAt = 0
+local ESP_FRAME_BUDGET = 3 
 
 RunService.RenderStepped:Connect(function()
 	if not espEnabled then
 		for p, d in pairs(ESP) do if d.sg then d.sg.Enabled = false end end
 		return
-	end
-
-	local nowTick = tick()
-	if nowTick - espEnsureAt > 0.5 then
-		espEnsureAt = nowTick
-		for _, pp in ipairs(Players:GetPlayers()) do
-			if pp ~= player and not ESP[pp] and not espBuilding[pp] then
-				task.spawn(function() pcall(MakeESP, pp) end)
-			end
-		end
 	end
 
 	local cam = Workspace.CurrentCamera
@@ -950,7 +926,6 @@ RunService.RenderStepped:Connect(function()
 	local camPos = cf.Position
 
 	for p, d in pairs(ESP) do
-
 		if not d.sg or not d.sg.Parent then CleanESP(p); continue end
 		if not d.Char or not d.Char.Parent then CleanESP(p); continue end
 		if not d.HRP or not d.HRP.Parent then CleanESP(p); continue end
@@ -1047,14 +1022,14 @@ RunService.RenderStepped:Connect(function()
 end)
 
 local DoorSys = {
-	Enabled = false,
+	Enabled = true,
 	Range = 12,
 	Parts = {},
 	Orig = {},
 }
 
-local DOOR_SCAN_INTERVAL = 0.1
-local DOOR_CLEAN_INTERVAL = 3.0
+local DOOR_SCAN_INTERVAL = 0.1 
+local DOOR_CLEAN_INTERVAL = 3.0 
 
 local function ScanDoors()
 	local map = Workspace:FindFirstChild("Map")
@@ -1259,11 +1234,11 @@ local function MoveToPosition(targetPos)
 	if hum.PlatformStand then hum.PlatformStand = false end
 
 	local direction = (targetPos - hrp.Position)
-	direction = Vector3.new(direction.X, 0, direction.Z)
+	direction = Vector3.new(direction.X, 0, direction.Z) 
 	local distance = direction.Magnitude
 
 	if distance < FARM_MOVE_REACH_DISTANCE then
-		return true
+		return true 
 	end
 
 	local path
@@ -1278,9 +1253,8 @@ local function MoveToPosition(targetPos)
 	end)
 
 	if not success or not path or path.Status ~= Enum.PathStatus.Success then
-
 		local moveDir = direction.Unit
-		local stepSize = 5
+		local stepSize = 5 
 		local totalMoved = 0
 		local start = tick()
 
@@ -1307,7 +1281,6 @@ local function MoveToPosition(targetPos)
 			local newHrp = GetMyHRP()
 			if newHrp then
 				totalMoved = totalMoved + stepSize
-
 				if (newHrp.Position - hrp.Position).Magnitude < 0.5 then
 					break
 				end
@@ -1318,7 +1291,6 @@ local function MoveToPosition(targetPos)
 
 	local waypoints = path:GetWaypoints()
 	if #waypoints == 0 then
-
 		local moveDir = direction.Unit
 		hum:Move(moveDir)
 		task.wait(0.5)
@@ -1328,7 +1300,7 @@ local function MoveToPosition(targetPos)
 
 	local start = tick()
 	for i, wp in ipairs(waypoints) do
-		if not autoFarm then return false end
+		if not autoFarm then return false end 
 
 		local hum2 = GetMyHumanoid()
 		local hrp2 = GetMyHRP()
@@ -1587,7 +1559,7 @@ local function FarmLoop()
 
 		task.wait(FARM_TP_COOLDOWN)
 
-		MoveForwardBackward(6, 4)
+		MoveForwardBackward(6, 4) 
 		task.wait(FARM_AFTER_KEYS)
 
 		local checkStart = tick()
@@ -1622,11 +1594,11 @@ ScanWeapons()
 local LastShoot, LastMelee = 0, 0
 local shootCountThisFrame = 0
 
-local FRAME_BUDGET_MS = 4
+local FRAME_BUDGET_MS = 4 
 
 RunService.Heartbeat:Connect(function()
 	local frameStart = tick()
-	shootCountThisFrame = 0
+	shootCountThisFrame = 0 
 
 	if autoFarm and farmRunning then
 		pcall(UpdateCircle)
@@ -1634,7 +1606,6 @@ RunService.Heartbeat:Connect(function()
 	end
 
 	if autoMelee and HasMelee() and (tick() - LastMelee) >= MELEE_CD then
-
 		if (tick() - frameStart) * 1000 < FRAME_BUDGET_MS then
 			local t = GetMeleeTargets()
 			if #t > 0 then
@@ -1645,7 +1616,6 @@ RunService.Heartbeat:Connect(function()
 	end
 
 	if autoShoot and (tick() - LastShoot) >= SHOOT_CD and shootCountThisFrame < MAX_SHOOTS_PER_FRAME then
-
 		if (tick() - frameStart) * 1000 < FRAME_BUDGET_MS then
 			local hasR, isSG = HasRanged()
 			if hasR then
@@ -1661,6 +1631,348 @@ RunService.Heartbeat:Connect(function()
 
 	pcall(UpdateCircle)
 end)
+
+local function setLabel(lbl, txt)
+pcall(function()
+if lbl.SetText then lbl:SetText(tostring(txt)) else lbl.Text = tostring(txt) end
+end)
+end
+
+local CombatTab = Window:AddTab("战斗", "crosshair")
+local EspTab = Window:AddTab("透视", "eye")
+local FunTab = Window:AddTab("娱乐", "music")
+local WLTab = Window:AddTab("白名单", "shield")
+
+local cL = CombatTab:AddLeftGroupbox("自动功能", "power")
+local cS = CombatTab:AddLeftGroupbox("状态", "activity")
+local cR = CombatTab:AddRightGroupbox("参数", "sliders-horizontal")
+
+cL:AddToggle("scpShoot", {
+Text = "自动射击",
+Default = false,
+Callback = function(v) autoShoot = v end,
+})
+cL:AddToggle("scpMelee", {
+Text = "自动近战",
+Default = false,
+Callback = function(v) autoMelee = v end,
+})
+cL:AddToggle("scpRay", {
+Text = "视线检测（关=穿墙）",
+Default = false,
+Callback = function(v) rayEnabled = v end,
+})
+cL:AddToggle("scpBeam", {
+Text = "弹道特效",
+Default = false,
+Callback = function(v) drawBeams = v end,
+})
+cL:AddToggle("scpCircle", {
+Text = "脚底圆圈",
+Default = false,
+Callback = function(v)
+drawCircle = v
+if drawCircle then pcall(CreateCircle) else pcall(DestroyCircle) end
+end,
+})
+cL:AddToggle("scpEscD", {
+Text = "攻击逃出D级",
+Default = false,
+Callback = function(v) attackEscapedD = v end,
+})
+cL:AddToggle("scpInv", {
+Text = "无敌检测（跳过无敌）",
+Default = true,
+Callback = function(v)
+invincibleCheck = v
+if not invincibleCheck then invincibleUntil = setmetatable({}, { __mode = "k" }) end
+end,
+})
+cL:AddToggle("scpDoor", {
+Text = "穿门",
+Default = false,
+Callback = function(v)
+DoorSys.Enabled = v
+if not v then pcall(RestoreAllDoors) end
+end,
+})
+
+local statusLabel = cS:AddLabel("加载中...")
+
+cR:AddSlider("scpRange", {
+Text = "射程",
+Default = MAX_RANGE,
+Min = 10,
+Max = 2000,
+Rounding = 0,
+Suffix = " studs",
+Callback = function(v) MAX_RANGE = math.floor(v) end,
+})
+cR:AddSlider("scpMeleeRange", {
+Text = "近战范围",
+Default = MELEE_RANGE,
+Min = 2,
+Max = 20,
+Rounding = 0,
+Callback = function(v)
+MELEE_RANGE = math.floor(v)
+pcall(CreateCircle)
+end,
+})
+cR:AddSlider("scpShootCd", {
+Text = "射击冷却",
+Default = SHOOT_CD,
+Min = 0.087,
+Max = 1,
+Rounding = 3,
+Suffix = " s",
+Callback = function(v) SHOOT_CD = v end,
+})
+cR:AddButton({
+Text = "立即扫描武器",
+Func = function()
+pcall(ScanWeapons)
+Library:Notify("已扫描武器", 3)
+end,
+})
+cR:AddButton({
+Text = "恢复默认设置",
+Func = function()
+local O = Library.Options
+if O.scpShoot then O.scpShoot:SetValue(false) end
+if O.scpMelee then O.scpMelee:SetValue(false) end
+if O.scpRay then O.scpRay:SetValue(false) end
+if O.scpBeam then O.scpBeam:SetValue(false) end
+if O.scpCircle then O.scpCircle:SetValue(false) end
+if O.scpEscD then O.scpEscD:SetValue(false) end
+if O.scpInv then O.scpInv:SetValue(true) end
+if O.scpDoor then O.scpDoor:SetValue(false) end
+if O.scpEsp then O.scpEsp:SetValue(false) end
+if O.scpFun then O.scpFun:SetValue(false) end
+if O.scpSilent then O.scpSilent:SetValue(false) end
+if O.scpFarm then O.scpFarm:SetValue(false) end
+if O.scpList then O.scpList:SetValue(true) end
+if O.scpRange then O.scpRange:SetValue(271) end
+if O.scpMeleeRange then O.scpMeleeRange:SetValue(8) end
+if O.scpShootCd then O.scpShootCd:SetValue(0.087) end
+Library:Notify("已恢复默认", 3)
+end,
+})
+cR:AddButton({
+Text = "全量卸载",
+Func = function()
+pcall(Unload)
+Library:Notify("已卸载", 3)
+end,
+})
+
+local eL = EspTab:AddLeftGroupbox("透视", "eye")
+local espBuilding = setmetatable({}, { __mode = "k" })
+local function EnsureESP(p)
+if p == player or ESP[p] or espBuilding[p] then return end
+espBuilding[p] = true
+task.spawn(function()
+pcall(MakeESP, p)
+espBuilding[p] = nil
+end)
+end
+eL:AddToggle("scpEsp", {
+Text = "透视 ESP",
+Default = false,
+Callback = function(v)
+espEnabled = v
+if v then
+for _, p in ipairs(Players:GetPlayers()) do EnsureESP(p) end
+else
+for p in pairs(ESP) do pcall(CleanESP, p) end
+pcall(function()
+local pg = player:FindFirstChild("PlayerGui")
+if pg then
+for _, o in ipairs(pg:GetChildren()) do
+if o:IsA("ScreenGui") and o.Name:sub(1, 4) == "ESP_" then
+local nm = o.Name:sub(5)
+local owner = Players:FindFirstChild(nm)
+if not owner or not ESP[owner] then pcall(o.Destroy, o) end
+end
+end
+end
+end)
+end
+end,
+})
+task.spawn(function()
+while true do
+task.wait(1)
+if espEnabled then
+for _, p in ipairs(Players:GetPlayers()) do EnsureESP(p) end
+end
+end
+end)
+
+local fL = FunTab:AddLeftGroupbox("娱乐 / 功能", "music")
+local fR = FunTab:AddRightGroupbox("刷钱", "coins")
+fL:AddToggle("scpFun", {
+Text = "娱乐模式（只放音效）",
+Default = false,
+Callback = function(v) funMode = v end,
+})
+fL:AddToggle("scpSilent", {
+Text = "静默（不发开火音效）",
+Default = false,
+Callback = function(v) silentMode = v end,
+})
+fR:AddToggle("scpFarm", {
+Text = "刷钱",
+Default = false,
+Callback = function(v)
+autoFarm = v
+if autoFarm then task.spawn(FarmLoop) end
+end,
+})
+fR:AddButton({
+Text = "传送刷钱点",
+Func = function()
+TeleportTo(FARM_TELEPORT)
+task.wait(0.2)
+MoveForwardBackward(6, 4)
+end,
+})
+
+local wL = WLTab:AddLeftGroupbox("白名单", "shield")
+local wR = WLTab:AddRightGroupbox("玩家列表", "users")
+wL:AddInput("scpWlInput", {
+Text = "加入白名单",
+Default = "",
+Placeholder = "输入玩家名",
+Finished = true,
+Callback = function(v) addWL(v) end,
+})
+wL:AddButton({
+Text = "清空白名单",
+Func = function()
+for n in pairs(WL) do WL[n] = nil end
+Library:Notify("白名单已清空", 3)
+end,
+})
+local ListVisible = true
+wR:AddToggle("scpList", {
+Text = "显示玩家列表",
+Default = true,
+Callback = function(v) ListVisible = v end,
+})
+local playerListLabel = wR:AddLabel("加载中...")
+
+
+task.spawn(function()
+	local REFRESH_INTERVAL = 0.1 
+
+	while true do
+		task.wait(REFRESH_INTERVAL)
+		local myHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if not myHRP then goto continue_loop end
+
+		local myPos = myHRP.Position
+		local enemyCount, violateCount, escapeCount, invincibleCount = 0, 0, 0, 0
+		local friendLines = {}
+		local enemyLines = {}
+
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p == player or not p.Character then goto next_pl end
+			local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+			if not hrp then goto next_pl end
+
+			local d = (hrp.Position - myPos).Magnitude
+			if d > MAX_RANGE then goto next_pl end 
+
+			local hu = p.Character:FindFirstChildOfClass("Humanoid")
+			if not hu or hu.Health <= 0 then goto next_pl end
+
+			if IsEnemy(p) then enemyCount = enemyCount + 1 end
+			if IsHostile(p) then violateCount = violateCount + 1 end
+			if IsEscaped(p) then escapeCount = escapeCount + 1 end
+
+			local isInv = IsInvincibleCached(p)
+			if not isInv and not invincibleUntil[p] then
+				if CheckForceFieldExists(p) then
+					isInv = true
+					MarkInvincible(p)
+				end
+			end
+			if isInv then invincibleCount = invincibleCount + 1 end
+
+			if ListVisible then
+				local role = GetRole(p) or "?"
+				local cn = RoleNames[role] or role
+
+				local tags = {}
+				if IsHostile(p) then table.insert(tags, "❗") end
+				if IsEscaped(p) then table.insert(tags, "🏃") end
+				if isInv then table.insert(tags, "🛡️") end
+				local suffix = #tags > 0 and table.concat(tags) or ""
+
+				local distStr = " " .. math.floor(d) .. "m"
+				local line = p.Name .. " [" .. cn .. "]" .. suffix .. distStr
+
+				local isFriend = false
+				if role == myRole and role ~= "" then
+					isFriend = true
+				elseif FOUNDATION[myRole] and FOUNDATION[role] then
+					isFriend = true
+				elseif CHAOS[myRole] and CHAOS[role] then
+					isFriend = true
+				elseif DCLASS[myRole] and DCLASS[role] then
+					isFriend = true
+				end
+
+				if isFriend then
+					table.insert(friendLines, "🛡️" .. line)
+				else
+					table.insert(enemyLines, "⚠️" .. line)
+				end
+			end
+
+			::next_pl::
+		end
+
+		if statusLabel then
+			local roleName = RoleNames[myRole] or (myRole or "未知")
+			local wid = currentWeaponID
+			if #wid > 8 then wid = wid:sub(1, 8) .. "..." end
+			local modeStr = ""
+			if silentMode then modeStr = " 🔇静默" end
+			if funMode then modeStr = modeStr .. " 🎵娱乐" end
+			if invincibleCheck then modeStr = modeStr .. " 🛡️" end
+			if drawBeams then modeStr = modeStr .. " 🌸" end
+			local farmStr = autoFarm and " 🌾刷钱" or ""
+			local txt = roleName .. "\n武器:" .. currentWeaponName .. "\nID:" .. wid .. "\n敌人:" .. enemyCount .. " 违规:" .. violateCount .. " 逃出:" .. escapeCount .. " 无敌:" .. invincibleCount .. " 门:" .. DoorCount .. modeStr .. farmStr
+			setLabel(statusLabel, txt)
+		end
+
+		if playerListLabel and ListVisible then
+			local allLines = {}
+			if #friendLines > 0 then
+				table.insert(allLines, "===== 友军 =====")
+				for _, l in ipairs(friendLines) do table.insert(allLines, l) end
+				table.insert(allLines, "")
+			end
+			if #enemyLines > 0 then
+				table.insert(allLines, "===== 敌人 =====")
+				for _, l in ipairs(enemyLines) do table.insert(allLines, l) end
+			end
+			if #allLines == 0 then
+				allLines = { "加载中..." }
+			end
+			setLabel(playerListLabel, table.concat(allLines, "\n"))
+		end
+
+		::continue_loop::
+	end
+end)
+
+if player.Character then
+	HookChar(player.Character)
+end
+
 for _, p in ipairs(Players:GetPlayers()) do
 	p.CharacterAdded:Connect(function()
 		charPartsCache[p.Character] = nil
@@ -1682,7 +1994,7 @@ Players.PlayerAdded:Connect(function(p)
 	end)
 end)
 
-local function Unload()
+Unload = function()
 	autoFarm = false
 	autoShoot = false
 	espEnabled = false
@@ -1691,14 +2003,6 @@ local function Unload()
 		pcall(function() conn:Disconnect() end)
 	end
 	allConnections = {}
-
-	pcall(function()
-		local pg = player:FindFirstChild("PlayerGui")
-		if pg then
-			local sg = pg:FindFirstChild("SCPAnomalySite")
-			if sg then sg:Destroy() end
-		end
-	end)
 
 	for p in pairs(ESP) do CleanESP(p) end
 	ESP = {}
@@ -1732,72 +2036,36 @@ local function Unload()
 	CircleParts = {}
 
 end
-local CombatTab = Window:AddTab("战斗", "crosshair")
-local cL = CombatTab:AddLeftGroupbox("自动功能", "power")
-local cR = CombatTab:AddRightGroupbox("参数", "sliders-horizontal")
-cL:AddToggle("scpShoot", { Text = "自动射击", Default = false, Callback = function(v) autoShoot = v end })
-cL:AddToggle("scpMelee", { Text = "自动近战", Default = false, Callback = function(v) autoMelee = v end })
-cL:AddToggle("scpRay", { Text = "视线检测", Default = false, Callback = function(v) rayEnabled = v end })
-cL:AddToggle("scpBeam", { Text = "弹道特效", Default = false, Callback = function(v) drawBeams = v end })
-cL:AddToggle("scpCircle", { Text = "脚底圆圈", Default = false, Callback = function(v) drawCircle = v; if not v then pcall(DestroyCircle) end end })
-cL:AddToggle("scpEscD", { Text = "攻击逃脱D级", Default = false, Callback = function(v) attackEscapedD = v end })
-cL:AddToggle("scpInv", { Text = "无敌检测", Default = true, Callback = function(v) invincibleCheck = v end })
-cR:AddSlider("scpRange", { Text = "射击距离", Default = MAX_RANGE, Min = 50, Max = 2000, Rounding = 0, Suffix = " studs", Callback = function(v) MAX_RANGE = v end })
-cR:AddSlider("scpMeleeR", { Text = "近战范围", Default = MELEE_RANGE, Min = 2, Max = 20, Rounding = 0, Callback = function(v) MELEE_RANGE = v; pcall(DestroyCircle); if drawCircle then pcall(CreateCircle) end end })
-cR:AddSlider("scpCd", { Text = "射击冷却", Default = SHOOT_CD, Min = 0.012, Max = 1, Rounding = 3, Suffix = " s", Callback = function(v) SHOOT_CD = v end })
-cR:AddButton({ Text = "立即扫描武器", Func = function() pcall(ScanWeapons); Library:Notify("已扫描武器", 3) end })
-local EspTab = Window:AddTab("透视", "eye")
-local eL = EspTab:AddLeftGroupbox("ESP", "eye")
-eL:AddToggle("scpEsp", {
-	Text = "ESP透视",
-	Default = false,
-	Callback = function(v)
-		espEnabled = v
-		if v then
-			for p in pairs(ESP) do pcall(CleanESP, p) end
-			espBuilding = setmetatable({}, { __mode = "k" })
-			for _, p in ipairs(Players:GetPlayers()) do
-				if p ~= player then
-					task.spawn(function() pcall(MakeESP, p) end)
-				end
-			end
-		else
-			for p in pairs(ESP) do
-				pcall(CleanESP, p)
-			end
-			espBuilding = setmetatable({}, { __mode = "k" })
-			local pg = player:FindFirstChild("PlayerGui")
-			if pg then
-				for _, ch in ipairs(pg:GetChildren()) do
-					if ch:IsA("ScreenGui") and string.sub(ch.Name, 1, 4) == "ESP_" then
-						pcall(function() ch:Destroy() end)
-					end
-				end
-			end
-		end
-	end,
-})
-local FunTab = Window:AddTab("娱乐", "smile")
-local fL = FunTab:AddLeftGroupbox("娱乐功能", "zap")
-local fR = FunTab:AddRightGroupbox("刷钱", "dollar-sign")
-fL:AddToggle("scpFun", { Text = "娱乐模式", Default = false, Callback = function(v) funMode = v end })
-fL:AddToggle("scpSilent", { Text = "静默模式", Default = false, Callback = function(v) silentMode = v end })
-fL:AddToggle("scpDoor", { Text = "穿门", Default = false, Callback = function(v) DoorSys.Enabled = v; if not v then pcall(RestoreAllDoors) end end })
-fR:AddToggle("scpFarm", { Text = "自动刷钱", Default = false, Callback = function(v) autoFarm = v; if v and not farmRunning then task.spawn(FarmLoop) end end })
-fR:AddButton({ Text = "全量卸载", Func = function() pcall(Unload); Library:Notify("已卸载", 3) end })
-local WlTab = Window:AddTab("白名单", "shield")
-local wL = WlTab:AddLeftGroupbox("白名单管理", "user")
-wL:AddInput("scpWl", { Text = "添加白名单", Default = "", Placeholder = "输入玩家名", Finished = true, Callback = function(v) if v and v ~= "" then addWL(v) end end })
-wL:AddButton({ Text = "清空白名单", Func = function() for n in pairs(WL) do WL[n] = nil end; Library:Notify("白名单已清空", 3) end })
-Library:Notify("SCP 功能已加载（默认关闭）", 3)
-if GHub and GHub.RegisterModule then
-GHub.RegisterModule("scp异常站点", { Name = "scp异常站点", CombatTab = CombatTab, EspTab = EspTab, FunTab = FunTab, WlTab = WlTab, Options = Library.Options, Unload = function() pcall(Unload) end })
+
+if type(GHub) == "table" then
+local info = {
+Name = "scp异常站点",
+Library = Library,
+Window = Window,
+CombatTab = CombatTab,
+EspTab = EspTab,
+FunTab = FunTab,
+WLTab = WLTab,
+Options = Library.Options,
+Unload = function()
+pcall(Unload)
+end,
+}
+if type(GHub.RegisterModule) == "function" then
+GHub.RegisterModule("scp异常站点", info)
 end
-if GHub and GHub.RegisterTab then
+if type(GHub.RegisterTab) == "function" then
 GHub.RegisterTab("战斗", CombatTab)
 GHub.RegisterTab("透视", EspTab)
 GHub.RegisterTab("娱乐", FunTab)
-GHub.RegisterTab("白名单", WlTab)
+GHub.RegisterTab("白名单", WLTab)
 end
-return { Name = "scp异常站点", CombatTab = CombatTab, EspTab = EspTab, FunTab = FunTab, WlTab = WlTab, Options = Library.Options, Unload = function() pcall(Unload) end }
+if type(GHub.Notify) == "function" then
+GHub.Notify("SCP 功能已加载", 3)
+else
+Library:Notify("SCP 功能已加载", 3)
+end
+return info
+end
+Library:Notify("SCP 功能已加载", 3)
 end
