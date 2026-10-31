@@ -408,9 +408,11 @@ _LOS_INTERVAL, SCAN_REFRESH = 0.06, 0
 end
 end,
 })
+local getGunDiag
+local nowStamp
 local mL = MiscTab:AddLeftGroupbox("状态", "activity")
 local mR = MiscTab:AddRightGroupbox("操作", "wrench")
-mL:AddLabel("等待数据...")
+local diagLabel = mL:AddLabel("等待数据...")
 mR:AddButton({
 Text = "立即重扫",
 Func = function()
@@ -716,7 +718,29 @@ local function hasMuzzle(tool)
 if not tool then return false end
 return tool:FindFirstChild("Muzzle", true) ~= nil
 end
+local LIMB_OK = {
+Head = true, UpperTorso = true, Torso = true, LowerTorso = true,
+HumanoidRootPart = true, LeftArm = true, RightArm = true,
+LeftLeg = true, RightLeg = true, LeftUpperArm = true, RightUpperArm = true,
+LeftLowerArm = true, RightLowerArm = true, LeftUpperLeg = true,
+RightUpperLeg = true, LeftLowerLeg = true, RightLowerLeg = true,
+LeftHand = true, RightHand = true, LeftFoot = true, RightFoot = true,
+}
+local _lastStamp = 0
+local _seedIdx = math.random(0, 1000000)
+local function nextStamp()
+local s = (type(nowStamp) == "function") and nowStamp() or nil
+if type(s) ~= "number" or s <= 0 then s = os.clock() end
+if s <= _lastStamp then s = _lastStamp + 0.0015 end
+_lastStamp = s
+return s
+end
+local function nextSeed()
+_seedIdx = (_seedIdx + 1) % 2147483647
+return _seedIdx
+end
 local _gunCache, _gunCacheAt = nil, 0
+local _gunMissReason = "未扫描"
 local function getGun()
 local now = os.clock()
 if _gunCache and _gunCache.Parent and (now - _gunCacheAt) < 1 then
@@ -737,7 +761,24 @@ if tool:IsA("Tool") and hasMuzzle(tool) then found = tool; break end
 end
 end
 end
+if not found then
+local cam = Workspace:FindFirstChild("Camera")
+if cam then
+for _, desc in ipairs(cam:GetDescendants()) do
+if desc:IsA("Tool") and hasMuzzle(desc) then found = desc; break end
+end
+end
+end
+if not found then
+local plrGui = lp:FindFirstChildOfClass("PlayerGui")
+if plrGui then
+for _, tool in ipairs(lp:GetDescendants()) do
+if tool:IsA("Tool") and hasMuzzle(tool) then found = tool; break end
+end
+end
+end
 _gunCache = found
+_gunMissReason = found and "" or "无Muzzle/AmmoLoaded的Tool"
 return found
 end
 local _aimPart = setmetatable({}, { __mode = "k" })
@@ -1795,26 +1836,68 @@ PR = require(refs:FindFirstChild("PacketReference"))
 PR_OK = PR ~= nil
 end
 end)
-local function nowStamp()
+nowStamp = function()
 local ok, t = pcall(function() return Workspace:GetServerTimeNow() end)
 if ok and type(t) == "number" and t > 0 then return t end
 return tick()
 end
+local _fireCalls = 0
+local _packetsSent = 0
+local _packetsFail = 0
+local _lastSendErr = ""
+local _lastFail = "未开火"
+local _lastGun = "无"
+local REAL_AIM = true
+local function aimAt(pos)
+local cam = Workspace.CurrentCamera
+if cam then
+pcall(function()
+local cp = cam.CFrame.Position
+if (pos - cp).Magnitude > 0.01 then
+cam.CFrame = CFrame.lookAt(cp, pos)
+end
+end)
+end
+local c = lp.Character
+if not c then return end
+local hrp = c:FindFirstChild("HumanoidRootPart")
+if not hrp then return end
+pcall(function()
+local flat = Vector3.new(pos.X, hrp.Position.Y, pos.Z)
+if (flat - hrp.Position).Magnitude > 0.01 then
+hrp.CFrame = CFrame.lookAt(hrp.Position, flat)
+end
+end)
+end
 local function fire(t)
-if not alive(t) then return false end
-if isExcludedModel(t) then return false end
-if not canAttack(t) then return false end
+_fireCalls = _fireCalls + 1
+if not alive(t) then _lastFail = "F1目标非存活"; return false end
+if isExcludedModel(t) then _lastFail = "F2目标被过滤"; return false end
+if not canAttack(t) then _lastFail = "F3目标不可攻击"; return false end
 local gun = getEquippedGun() or getGun()
-if not gun then return false end
+if not gun then
+_lastFail = "F4无枪械(" .. tostring(_gunMissReason) .. ")"
+return false
+end
 local mH = lp.Character and getAimPart(lp.Character)
 local tH = getTargetHitPart(t) or getAimPart(t)
-if not mH or not tH then return false end
+if not mH or not tH then _lastFail = "F5无瞄准部件"; return false end
 local origin = getShootOrigin(lp.Character)
 if not origin then origin = mH.Position end
 local shootDir = tH.Position - origin
-if shootDir.Magnitude < 0.001 then return false end
+if shootDir.Magnitude < 0.001 then _lastFail = "F6方向无效"; return false end
 shootDir = shootDir.Unit
-local stamp = nowStamp()
+if REAL_AIM then aimAt(tH.Position) end
+local realDir = shootDir
+pcall(function()
+local cam = Workspace.CurrentCamera
+if cam then
+local lv = cam.CFrame.LookVector
+if lv.Magnitude > 0.5 then realDir = lv.Unit end
+end
+end)
+local stamp = nextStamp()
+_lastGun = gun.Name
 pcall(function()
 local shootSound = Instance.new("Sound")
 shootSound.SoundId = "rbxassetid://8679627751"
@@ -1842,34 +1925,51 @@ tracerStart = origin + (shootDir * math.min(TRACER_LENGTH, 10))
 end
 drawTracer(tracerStart, tH.Position)
 end
+local limbName = tH.Name
+if not LIMB_OK[limbName] then
+if t:FindFirstChild("UpperTorso") then
+limbName = "UpperTorso"
+elseif t:FindFirstChild("Torso") then
+limbName = "Torso"
+elseif t:FindFirstChild("Head") then
+limbName = "Head"
+end
+end
+local victimPos = (t.PrimaryPart and t.PrimaryPart.Position) or tH.Position
 local data = {
 Gun = gun,
-Vector = shootDir,
+Vector = realDir,
 epoch = stamp,
 bulletOrigin = origin,
 bulletEnd = tH.Position,
-rngSeed = math.random(0, 255),
+rngSeed = nextSeed(),
 otherCharacter = t,
-hitLimb = tH.Name,
+hitLimb = limbName,
 hitTimestamp = stamp,
 clientHitPosition = tH.Position,
-clientVictimPosition = (t.PrimaryPart and t.PrimaryPart.Position) or tH.Position
+clientVictimPosition = victimPos
 }
 sent = sent + 1
 if PR_OK then
+_lastFail = "OK"
 task.spawn(function()
-pcall(function()
-local r = PR.ShootRegistration
+local names = { "ShootRegistration", "ReplicateGunShot", "gunshotCharacterHit" }
+for _, n in ipairs(names) do
+local ok, err = pcall(function()
+local r = PR[n]
 if r and r.send then r.send(data) end
-task.wait(PACKET_DELAY)
-local g = PR.ReplicateGunShot
-if g and g.send then g.send(data) end
-task.wait(PACKET_DELAY)
-local h = PR.gunshotCharacterHit
-if h and h.send then h.send(data) end
 end)
+if ok then
+_packetsSent = _packetsSent + 1
+else
+_packetsFail = _packetsFail + 1
+_lastSendErr = tostring(err)
+end
+task.wait(PACKET_DELAY)
+end
 end)
 else
+_lastFail = "PR缺失(仅本地伤害)"
 pcall(function()
 local h = t:FindFirstChildWhichIsA("Humanoid")
 if h then h:TakeDamage(10) end
@@ -1877,25 +1977,23 @@ end)
 end
 return true
 end
-local function startReload()
-state = "RELOAD"
-reloadUntil = os.clock() + RELOAD_TIME
-if target then hideLockUI(target, true) end
+local function releaseTarget()
+if target then hideLockUI(target) end
 target = nil
 _targetReady = false
 _lockStart = 0
 _losLostAt = 0
 _lastLosTime = 0
 _lastVerifyTime = 0
-_scanValid = false
-_scanRefreshAt = 0
+end
+local function startReload()
+state = "RELOAD"
+reloadUntil = os.clock() + RELOAD_TIME
 end
 requestScan = function()
 _scanValid = false
 _scanRefreshAt = 0
 end
-local _lastFireTime = 0
-local _MIN_FIRE_INTERVAL = 3.0
 local isDead = false
 local function resetOnDeath()
 isDead = true
@@ -1908,7 +2006,6 @@ _lockStart = 0
 _losLostAt = 0
 _lastLosTime = 0
 _lastVerifyTime = 0
-_lastFireTime = 0
 _scanValid = false
 _scanRefreshAt = 0
 end
@@ -1949,7 +2046,6 @@ _lockStart = 0
 _losLostAt = 0
 _lastLosTime = 0
 _lastVerifyTime = 0
-_lastFireTime = 0
 _scanValid = false
 _scanRefreshAt = 0
 hookMyDeath(c)
@@ -1969,43 +2065,25 @@ if not running then return end
 local myChar = lp.Character
 local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
 if isDead or not myChar or not myHum or myHum.Health <= 0 then
-if not isDead then
 resetOnDeath()
-else
-if target then hideLockUI(target) end
-target = nil
-_targetReady = false
-state = "IDLE"
-reloadUntil = 0
-_lockStart = 0
-_losLostAt = 0
-_lastLosTime = 0
-_lastVerifyTime = 0
-_lastFireTime = 0
-_scanValid = false
-_scanRefreshAt = 0
-end
 return
 end
 local now = os.clock()
-if state == "IDLE" then
+if state == "RELOAD" and now >= reloadUntil then
+state = "IDLE"
+end
 if target and (now - _lastVerifyTime) >= 0.2 then
 _lastVerifyTime = now
-local myChar = lp.Character
 local tH = getAimPart(target)
-local myHeadPart = myChar and myChar:FindFirstChild("Head")
+local myHeadPart = myChar:FindFirstChild("Head")
 if not alive(target) or isTeam(target) or not canAttack(target) then
-hideLockUI(target); target = nil; _targetReady = false
-_lockStart = 0; _losLostAt = 0
+releaseTarget()
 elseif not tH or (myHeadPart and (myHeadPart.Position - tH.Position).Magnitude > MAX_DIST) then
-hideLockUI(target); target = nil; _targetReady = false
-_lockStart = 0; _losLostAt = 0
+releaseTarget()
 end
 end
 if not target then
-local scanChar = lp.Character
-if scanChar then
-local t = stepScan(scanChar)
+local t = stepScan(myChar)
 if t then
 target = t
 _targetReady = true
@@ -2015,16 +2093,8 @@ _lastLosTime = now
 showLockUI(t)
 end
 end
-end
 if target then
-local myChar = lp.Character
-if myChar then
-if RAY_ACCURACY <= 0 then
-if (now - _lastLosTime) >= 0.12 then
-_lastLosTime = now
-_targetReady = clearShotShooterStyle(myChar, target)
-end
-elseif (now - _lastLosTime) >= _LOS_INTERVAL then
+if (now - _lastLosTime) >= _LOS_INTERVAL then
 _lastLosTime = now
 _targetReady = clearShotShooterStyle(myChar, target)
 setLockState(target, _targetReady)
@@ -2033,69 +2103,23 @@ if not _targetReady then
 if _losLostAt == 0 then
 _losLostAt = now
 elseif LOS_RELEASE_GRACE <= 0 or (now - _losLostAt) >= LOS_RELEASE_GRACE then
-hideLockUI(target)
-target = nil
-_targetReady = false
-_lockStart = 0
-_losLostAt = 0
-_lastLosTime = 0
-_scanValid = false
-_scanRefreshAt = 0
-local nt = stepScan(myChar)
-if nt then
-target = nt
-_targetReady = true
-_lockStart = now
-showLockUI(nt)
-end
+releaseTarget()
 end
 else
 _losLostAt = 0
 end
-if target then
+end
+if state == "IDLE" and target then
 if not _targetReady then
 _lockStart = 0
 elseif _lockStart == 0 then
 _lockStart = now
 end
-local confirmed = _targetReady
-and (LOCK_CONFIRM_TIME <= 0 or (now - _lockStart) >= LOCK_CONFIRM_TIME)
-if confirmed and (now - _lastFireTime) >= _MIN_FIRE_INTERVAL then
-_lastFireTime = now
-if clearShotShooterStyle(myChar, target, true) then
+local confirmed = _targetReady and (LOCK_CONFIRM_TIME <= 0 or (now - _lockStart) >= LOCK_CONFIRM_TIME)
+if confirmed and clearShotShooterStyle(myChar, target, true) then
 if fire(target) then
 startReload()
 end
-else
-if target then hideLockUI(target) end
-target = nil
-_targetReady = false
-_lockStart = 0
-_losLostAt = 0
-_lastLosTime = 0
-_scanValid = false
-_scanRefreshAt = 0
-end
-end
-end
-end
-end
-elseif state == "RELOAD" then
-if target then
-hideLockUI(target)
-target = nil
-_targetReady = false
-_lockStart = 0
-end
-if now >= reloadUntil then
-_targetReady = false
-_lockStart = 0
-_losLostAt = 0
-_lastLosTime = 0
-_lastVerifyTime = 0
-_scanValid = false
-_scanRefreshAt = 0
-state = "IDLE"
 end
 end
 end)
@@ -2109,6 +2133,36 @@ target = nil
 _targetReady = false
 state = "IDLE"
 end
+end
+end)
+task.spawn(function()
+while true do
+task.wait(0.5)
+pcall(function()
+if not diagLabel then return end
+local g = getEquippedGun() or getGun()
+local ammoStr, fireStr = "-", "-"
+if g then
+local al = g:FindFirstChild("AmmoLoaded")
+if al and (al:IsA("IntValue") or al:IsA("NumberValue")) then
+ammoStr = tostring(al.Value)
+end
+local cf = g:GetAttribute("CanFire")
+if type(cf) == "boolean" then fireStr = tostring(cf) end
+end
+local tg = target and (target.Name or "?") or "无"
+diagLabel:SetText(string.format(
+"状态:%s | 启动:%s | 死亡:%s\n目标:%s | 视线:%s\n枪:%s | 弹:%s | 可开火:%s\nPR:%s | 开火:%d | 包成:%d 败:%d\n最后:%s",
+tostring(state),
+running and "开" or "关",
+isDead and "是" or "否",
+tg,
+_targetReady and "通" or "断",
+_lastGun, ammoStr, fireStr,
+PR_OK and "已连接" or "缺失",
+_fireCalls, _packetsSent, _packetsFail,
+_lastFail))
+end)
 end
 end)
 Library:Notify("GR 功能已加载", 3)
