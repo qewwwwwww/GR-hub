@@ -2061,7 +2061,7 @@ state = "IDLE"
 end
 end
 end)
-Library:Notify("GR 功能已加载（默认关闭）", 3)
+Library:Notify("GR 功能已加载", 3)
 if GHub and GHub.RegisterModule then
 GHub.RegisterModule("莱克星顿与康科德", { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, Options = Library.Options, Unload = function() running = false; state = "IDLE"; target = nil; _targetReady = false; pcall(clearAllLockUI) end })
 end
