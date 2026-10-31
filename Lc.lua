@@ -1813,11 +1813,9 @@ _scanRefreshAt = 0
 end
 local _lastFireTime = 0
 local _MIN_FIRE_INTERVAL = 3.0
-local function hookMyDeath(c)
-if not c then return end
-local hum = c:FindFirstChildOfClass("Humanoid") or c:WaitForChild("Humanoid", 5)
-if not hum then return end
-hum.Died:Connect(function()
+local isDead = false
+local function resetOnDeath()
+isDead = true
 reloadUntil = 0
 state = "IDLE"
 clearAllLockUI()
@@ -1830,16 +1828,77 @@ _lastVerifyTime = 0
 _lastFireTime = 0
 _scanValid = false
 _scanRefreshAt = 0
+end
+local function hookMyDeath(c)
+if not c then return end
+local hum = c:FindFirstChildOfClass("Humanoid")
+if not hum then
+task.delay(0.5, function()
+if c and c.Parent then
+local h2 = c:FindFirstChildOfClass("Humanoid")
+if h2 then hookMyDeath(c) end
+end
+end)
+return
+end
+hum.Died:Connect(function()
+resetOnDeath()
+end)
+hum.HealthChanged:Connect(function(h)
+if h <= 0 then
+resetOnDeath()
+end
 end)
 end
-if lp.Character then hookMyDeath(lp.Character) end
+if lp.Character then
+isDead = false
+hookMyDeath(lp.Character)
+end
 lp.CharacterAdded:Connect(function(c)
 task.wait(0.3)
+isDead = false
+reloadUntil = 0
+state = "IDLE"
+clearAllLockUI()
+target = nil
+_targetReady = false
+_lockStart = 0
+_losLostAt = 0
+_lastLosTime = 0
+_lastVerifyTime = 0
+_lastFireTime = 0
+_scanValid = false
+_scanRefreshAt = 0
 hookMyDeath(c)
+if requestScan then requestScan() end
+end)
+lp.CharacterRemoving:Connect(function()
+resetOnDeath()
 end)
 RunService.Heartbeat:Connect(function(dt)
 updateCooldownBar()
 if not running then return end
+local myChar = lp.Character
+local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+if isDead or not myChar or not myHum or myHum.Health <= 0 then
+if not isDead then
+resetOnDeath()
+else
+if target then hideLockUI(target) end
+target = nil
+_targetReady = false
+state = "IDLE"
+reloadUntil = 0
+_lockStart = 0
+_losLostAt = 0
+_lastLosTime = 0
+_lastVerifyTime = 0
+_lastFireTime = 0
+_scanValid = false
+_scanRefreshAt = 0
+end
+return
+end
 local now = os.clock()
 if state == "IDLE" then
 if target and (now - _lastVerifyTime) >= 0.2 then
@@ -1964,5 +2023,5 @@ state = "IDLE"
 end
 end
 end)
-Library:Notify("GR 功能已加载）", 3)
+Library:Notify("GR 功能已加载", 3)
 end
