@@ -509,8 +509,15 @@ _isNpc[c] = res
 return res
 end
 local function alive(c)
+if not c or not c.Parent then return false end
 local h = humOf(c)
-return h ~= nil and h.Health > 0
+if not h or not h.Parent then return false end
+if h.Health <= 0 then return false end
+if c:IsA("Model") then
+if not c:FindFirstChildOfClass("Humanoid") then return false end
+if not c:FindFirstChild("HumanoidRootPart") and not c.PrimaryPart then return false end
+end
+return true
 end
 local _teamAttackers, _teamDefenders
 local _teamsTried = false
@@ -600,6 +607,7 @@ lp:GetPropertyChangedSignal("Team"):Connect(invalidateTeamCache)
 end)
 local function canAttack(c)
 if not c then return false end
+if not alive(c) then return false end
 if c:GetAttribute("Immortal") then return false end
 if c:GetAttribute("epoch") then return false end
 if TEAM_CHECK and not isEnemyChar(c) then return false end
@@ -681,25 +689,6 @@ local TRACER_FADE_STEP = (TRACER_LIFETIME - TRACER_HOLD) / 4
 local function drawTracer(fromPos, toPos)
 if not FX_ENABLED then return end
 if (toPos - fromPos).Magnitude < 0.5 then return end
-local beamEnd = toPos
-pcall(function()
-local rp = RaycastParams.new()
-local exclude = {}
-local cosmetic = Workspace:FindFirstChild("CosmeticContainer")
-if cosmetic then exclude[#exclude + 1] = cosmetic end
-if lp.Character then exclude[#exclude + 1] = lp.Character end
-for _, p in ipairs(Players:GetPlayers()) do
-if p ~= lp and p.Character then exclude[#exclude + 1] = p.Character end
-end
-rp.FilterType = Enum.RaycastFilterType.Exclude
-rp.FilterDescendantsInstances = exclude
-rp.IgnoreWater = true
-local hit = Workspace:Raycast(fromPos, toPos - fromPos, rp)
-if hit and (hit.Position - toPos).Magnitude > 2 then
-beamEnd = hit.Position + (hit.Normal * 0.15)
-end
-end)
-toPos = beamEnd
 local a0 = Instance.new("Attachment")
 a0.WorldCFrame = CFrame.new(fromPos)
 a0.Parent = tracerFolder
@@ -1715,6 +1704,7 @@ if ok and type(t) == "number" and t > 0 then return t end
 return tick()
 end
 local function fire(t)
+if not alive(t) then return false end
 local gun = getEquippedGun() or getGun()
 if not gun then return false end
 local mH = lp.Character and getAimPart(lp.Character)
@@ -1747,13 +1737,7 @@ math.random(-30, 30) / 100,
 math.random(-100, 100) / 100
 ).Unit
 local randomDist = math.random(1, 10)
-local candidatePos = hrp.Position + (randomDir * randomDist)
-local hit = Workspace:Raycast(origin, candidatePos - origin, getRaycastParams())
-if hit then
-tracerStart = hit.Position - (hit.Normal * 0.5)
-else
-tracerStart = candidatePos
-end
+tracerStart = hrp.Position + (randomDir * randomDist)
 else
 tracerStart = origin + (shootDir * math.min(TRACER_LENGTH, 10))
 end
