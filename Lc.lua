@@ -113,12 +113,20 @@ if workspace.MapContainer and workspace.MapContainer.Special then
 NPC_ROOT = workspace.MapContainer.Special:FindFirstChild("NPC_Container")
 end
 end)
-local EXCLUDE_ROOT = nil
+local EXCLUDE_ROOTS = {}
 pcall(function()
-local sp = workspace.MapContainer and workspace.MapContainer.Special
+local mc = workspace.MapContainer
+if mc then
+local sp = mc:FindFirstChild("Special")
 if sp then
 local nd = sp:FindFirstChild("NPC_Data")
-if nd then EXCLUDE_ROOT = nd:FindFirstChild("RigContainers") end
+if nd then EXCLUDE_ROOTS[#EXCLUDE_ROOTS + 1] = nd end
+end
+local misc = mc:FindFirstChild("Miscellaneous")
+if misc then
+local cb = misc:FindFirstChild("Special_ColonistBodies")
+if cb then EXCLUDE_ROOTS[#EXCLUDE_ROOTS + 1] = cb end
+end
 end
 end)
 local _excludeCache = setmetatable({}, { __mode = "k" })
@@ -127,8 +135,11 @@ if not m then return false end
 local v = _excludeCache[m]
 if v ~= nil then return v end
 local res = false
-if EXCLUDE_ROOT and m:IsDescendantOf(EXCLUDE_ROOT) then
+for _, root in ipairs(EXCLUDE_ROOTS) do
+if m:IsDescendantOf(root) then
 res = true
+break
+end
 end
 _excludeCache[m] = res
 return res
