@@ -114,14 +114,23 @@ NPC_ROOT = workspace.MapContainer.Special:FindFirstChild("NPC_Container")
 end
 end)
 local EXCLUDE_ROOTS = {}
-local EXCLUDE_MODEL_ROOTS = {}
+local EXCLUDE_GROUP_ROOTS = {}
+local GROUP_KEYWORDS = { "spooky", "hollow" }
+local PART_LIKE_NAMES = {
+head = true, torso = true, uppertorso = true, lowertorso = true,
+humanoidrootpart = true, rootpart = true, root = true,
+leftarm = true, rightarm = true, leftleg = true, rightleg = true,
+leftupperarm = true, rightupperarm = true, leftlowerarm = true, rightlowerarm = true,
+leftupperleg = true, rightupperleg = true, leftlowerleg = true, rightlowerleg = true,
+leftfoot = true, rightfoot = true, lefthand = true, righthand = true,
+}
 pcall(function()
 local mc = workspace.MapContainer
 if mc then
 local sp = mc:FindFirstChild("Special")
 if sp then
 local nd = sp:FindFirstChild("NPC_Data")
-if nd then EXCLUDE_MODEL_ROOTS[#EXCLUDE_MODEL_ROOTS + 1] = nd end
+if nd then EXCLUDE_GROUP_ROOTS[#EXCLUDE_GROUP_ROOTS + 1] = nd end
 end
 local misc = mc:FindFirstChild("Miscellaneous")
 if misc then
@@ -145,9 +154,25 @@ end
 end
 if not res then
 local n = string.lower(m.Name or "")
-for _, root in ipairs(EXCLUDE_MODEL_ROOTS) do
+if PART_LIKE_NAMES[n] then res = true end
+end
+if not res then
+for _, root in ipairs(EXCLUDE_GROUP_ROOTS) do
 if m:IsDescendantOf(root) then
-if not (string.find(n, "spooky", 1, true) or string.find(n, "hollow", 1, true)) then
+local node = m
+local hit = false
+while node and node ~= root do
+local nn = string.lower(node.Name or "")
+for _, kw in ipairs(GROUP_KEYWORDS) do
+if string.find(nn, kw, 1, true) then
+hit = true
+break
+end
+end
+if hit then break end
+node = node.Parent
+end
+if hit then
 res = true
 break
 end
