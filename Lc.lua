@@ -9,7 +9,7 @@ local CollectionService = game:GetService("CollectionService")
 local Debris = game:GetService("Debris")
 local lp = Players.LocalPlayer
 local LOG_ENABLED = false
-local FX_ENABLED = false
+local FX_ENABLED = true
 local USE_NATIVE_TRACER = false
 local AIM_RAY_FROM_MUZZLE = false
 local BULLET_SPEED = 1600
@@ -69,9 +69,9 @@ return { "Head", "Torso", "HumanoidRootPart" }
 end
 local AIM_PART_MAIN = "Head"
 local AIM_PART_FALLBACK = true
-local RAY_ACCURACY = 2
+local RAY_ACCURACY = 4
 local LOS_CACHE_TTL = 0.05
-local EVICT_EVERY = 0.02
+local EVICT_EVERY = 0.005
 local MULTI_PART_AIM = true
 local HEADSHOT_ONLY = false
 local EARLY_OUT_HEAD_BLOCK = false
@@ -79,7 +79,7 @@ local PIERCE_ENABLED = true
 local PIERCE_MAX = 3
 local PIERCE_STEP = 0.05
 local LOS_RELEASE_GRACE = 0.15
-local _LOS_INTERVAL = 0.03
+local _LOS_INTERVAL = 0.01
 local _RAYPARAMS_REBUILD = 2.0
 local SCAN_BUDGET = 0.003
 local SCAN_REFRESH = 0
@@ -306,7 +306,7 @@ partOptions[#partOptions + 1] = PART_LABEL[n] or n
 end
 rL:AddToggle("swRay", {
 Text = "射线锁定",
-Default = false,
+Default = true,
 Callback = function(v)
 RAY_ENABLED = v
 _losCache = setmetatable({}, { __mode = "k" })
@@ -334,7 +334,7 @@ end,
 })
 rL:AddSlider("sldSpeed", {
 Text = "扫描速度",
-Default = 3,
+Default = 5,
 Min = 1,
 Max = 5,
 Rounding = 0,
@@ -345,7 +345,7 @@ end,
 })
 rL:AddSlider("sldPrec", {
 Text = "射线模式",
-Default = RAY_ACCURACY,
+Default = 4,
 Min = 0,
 Max = 4,
 Rounding = 0,
@@ -353,12 +353,12 @@ Callback = function(v) RAY_ACCURACY = v end,
 })
 rR:AddToggle("swPierce", {
 Text = "穿透透明",
-Default = false,
+Default = true,
 Callback = function(v) PIERCE_ENABLED = v end,
 })
 rR:AddToggle("swTracer", {
 Text = "弹道特效",
-Default = false,
+Default = true,
 Callback = function(v)
 FX_ENABLED = v
 for _, ui in pairs(lockUI) do
@@ -396,17 +396,17 @@ if O.swFire then O.swFire:SetValue(false) end
 if O.swTeam then O.swTeam:SetValue(false) end
 if O.swBots then O.swBots:SetValue(false) end
 if O.swPlr then O.swPlr:SetValue(false) end
-if O.swRay then O.swRay:SetValue(false) end
+if O.swRay then O.swRay:SetValue(true) end
 if O.swFallback then O.swFallback:SetValue(false) end
-if O.swPierce then O.swPierce:SetValue(false) end
-if O.swTracer then O.swTracer:SetValue(false) end
+if O.swPierce then O.swPierce:SetValue(true) end
+if O.swTracer then O.swTracer:SetValue(true) end
 if O.swEco then O.swEco:SetValue(false) end
 if O.ddPart then O.ddPart:SetValue(PART_LABEL["Head"]) end
 if O.sldLock then O.sldLock:SetValue(0.35) end
 if O.sldCool then O.sldCool:SetValue(7) end
 if O.sldDist then O.sldDist:SetValue(300) end
-if O.sldSpeed then O.sldSpeed:SetValue(3) end
-if O.sldPrec then O.sldPrec:SetValue(2) end
+if O.sldSpeed then O.sldSpeed:SetValue(5) end
+if O.sldPrec then O.sldPrec:SetValue(4) end
 if requestScan then requestScan() end
 Library:Notify("已恢复默认", 3)
 end,
