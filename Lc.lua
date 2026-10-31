@@ -1,4 +1,6 @@
-return function(Library, Window)
+return function(Library, Window, GHub)
+local genv = (type(getgenv) == "function") and getgenv() or _G
+GHub = GHub or genv.GRHub
 local RunService = game:GetService("RunService")
 local UserInput = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
@@ -2059,5 +2061,13 @@ state = "IDLE"
 end
 end
 end)
-Library:Notify("GR 功能已加载", 3)
+Library:Notify("GR 功能已加载（默认关闭）", 3)
+if GHub and GHub.RegisterModule then
+GHub.RegisterModule("莱克星顿与康科德", { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, Options = Library.Options, Unload = function() running = false; state = "IDLE"; target = nil; _targetReady = false; pcall(clearAllLockUI) end })
+end
+if GHub and GHub.RegisterTab then
+GHub.RegisterTab("枪械", AimTab)
+GHub.RegisterTab("杂项", MiscTab)
+end
+return { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, Options = Library.Options, Unload = function() running = false; state = "IDLE"; target = nil; _targetReady = false; pcall(clearAllLockUI) end }
 end
