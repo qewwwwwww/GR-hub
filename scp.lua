@@ -728,6 +728,7 @@ local RoleColors = {
 }
 
 local ESP = {}
+local espBuilding = {}
 local charPartsCache = setmetatable({}, { __mode = "kv" })
 
 local allConnections = {}
@@ -787,7 +788,8 @@ local function CleanESP(p)
 end
 
 local function MakeESP(p)
-	if p == player or ESP[p] then return end
+	if p == player or ESP[p] or espBuilding[p] then return end
+	espBuilding[p] = true
 
 	local charConns = {}
 
@@ -807,15 +809,17 @@ local function MakeESP(p)
 		local char = p.Character or p.CharacterAdded:Wait()
 		local hrp = char:WaitForChild("HumanoidRootPart", 5)
 		local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
-		if not hrp or not hum then return end
+		if not hrp or not hum then espBuilding[p] = nil; return end
 
-		if ESP[p] then return end
+		if ESP[p] then espBuilding[p] = nil; return end
 
 		local sg = Instance.new("ScreenGui")
 		sg.Name = "ESP_" .. p.Name
 		sg.ResetOnSpawn = false; sg.Enabled = true
 		sg.IgnoreGuiInset = true; sg.DisplayOrder = 109
-		sg.Parent = player:WaitForChild("PlayerGui")
+		local pg = player:FindFirstChild("PlayerGui")
+		if not pg then pg = player:WaitForChild("PlayerGui", 5) end
+		sg.Parent = pg
 
 		local box = Instance.new("Frame")
 		box.Name = "Box"; box.BackgroundTransparency = 1; box.BorderSizePixel = 0; box.Parent = sg
@@ -846,6 +850,7 @@ local function MakeESP(p)
 
 		local espData = { sg = sg, Box = box, Stroke = stroke, Grad = grad, HpBg = hpBg, HpFill = hpFill, Dist = distL, Hum = hum, Char = char, HRP = hrp, connections = {} }
 		ESP[p] = espData
+		espBuilding[p] = nil
 
 		table.insert(espData.connections, TrackConnection(hum.HealthChanged:Connect(function(hp)
 			if not hpFill or not hpFill.Parent then return end
@@ -917,10 +922,22 @@ end
 
 local ESP_FRAME_BUDGET = 3
 
+local espEnsureAt = 0
+
 RunService.RenderStepped:Connect(function()
 	if not espEnabled then
 		for p, d in pairs(ESP) do if d.sg then d.sg.Enabled = false end end
 		return
+	end
+
+	local nowTick = tick()
+	if nowTick - espEnsureAt > 0.5 then
+		espEnsureAt = nowTick
+		for _, pp in ipairs(Players:GetPlayers()) do
+			if pp ~= player and not ESP[pp] and not espBuilding[pp] then
+				task.spawn(function() pcall(MakeESP, pp) end)
+			end
+		end
 	end
 
 	local cam = Workspace.CurrentCamera
@@ -1737,6 +1754,8 @@ eL:AddToggle("scpEsp", {
 	Callback = function(v)
 		espEnabled = v
 		if v then
+			for p in pairs(ESP) do pcall(CleanESP, p) end
+			espBuilding = setmetatable({}, { __mode = "k" })
 			for _, p in ipairs(Players:GetPlayers()) do
 				if p ~= player then
 					task.spawn(function() pcall(MakeESP, p) end)
@@ -1745,6 +1764,15 @@ eL:AddToggle("scpEsp", {
 		else
 			for p in pairs(ESP) do
 				pcall(CleanESP, p)
+			end
+			espBuilding = setmetatable({}, { __mode = "k" })
+			local pg = player:FindFirstChild("PlayerGui")
+			if pg then
+				for _, ch in ipairs(pg:GetChildren()) do
+					if ch:IsA("ScreenGui") and string.sub(ch.Name, 1, 4) == "ESP_" then
+						pcall(function() ch:Destroy() end)
+					end
+				end
 			end
 		end
 	end,
