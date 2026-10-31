@@ -144,6 +144,7 @@ end)
 local _excludeCache = setmetatable({}, { __mode = "k" })
 local function isExcludedModel(m)
 if not m then return false end
+if #EXCLUDE_ROOTS == 0 and #WHITELIST_GROUP_ROOTS == 0 then return false end
 local v = _excludeCache[m]
 if v ~= nil then return v end
 local res = false
@@ -503,6 +504,47 @@ end
 local _playerOf = setmetatable({}, { __mode = "k" })
 local _humOf = setmetatable({}, { __mode = "k" })
 local _isNpc = setmetatable({}, { __mode = "k" })
+local _rootsTick = 0
+local _rootSig = ""
+local function resolveRoots()
+local mc = workspace:FindFirstChild("MapContainer")
+if not mc then return false end
+local sig = ""
+local newEx, newWl = {}, {}
+local sp = mc:FindFirstChild("Special")
+if sp then
+local nd = sp:FindFirstChild("NPC_Data")
+if nd then
+newWl[#newWl + 1] = nd
+sig = sig .. "W" .. tostring(nd)
+end
+local nc = sp:FindFirstChild("NPC_Container")
+if nc then NPC_ROOT = nc end
+end
+local misc = mc:FindFirstChild("Miscellaneous")
+if misc then
+local cb = misc:FindFirstChild("Special_ColonistBodies")
+if cb then
+newEx[#newEx + 1] = cb
+sig = sig .. "E" .. tostring(cb)
+end
+end
+local gi = workspace:FindFirstChild("GameInfo")
+if gi then
+local bf = gi:FindFirstChild("LivingBotPlayers")
+if bf then BOT_FOLDER = bf end
+end
+if sig == _rootSig then return false end
+_rootSig = sig
+EXCLUDE_ROOTS = newEx
+WHITELIST_GROUP_ROOTS = newWl
+table.clear(_excludeCache)
+table.clear(_isNpc)
+table.clear(_aimPick)
+table.clear(_losCache)
+table.clear(_humOf)
+return true
+end
 local function playerOf(c)
 if not c then return nil end
 local v = _playerOf[c]
@@ -1668,6 +1710,7 @@ local _scanQueue = {}
 local _scanIdx = 1
 local _lastFullScan = 0
 local function refreshNpcPool()
+resolveRoots()
 for i = #_npcChars, 1, -1 do
 local m = _npcChars[i]
 if isExcludedModel(m) then
@@ -1759,6 +1802,8 @@ return tick()
 end
 local function fire(t)
 if not alive(t) then return false end
+if isExcludedModel(t) then return false end
+if not canAttack(t) then return false end
 local gun = getEquippedGun() or getGun()
 if not gun then return false end
 local mH = lp.Character and getAimPart(lp.Character)
@@ -1915,6 +1960,11 @@ resetOnDeath()
 end)
 RunService.Heartbeat:Connect(function(dt)
 updateCooldownBar()
+local rt = os.clock()
+if rt - _rootsTick >= 2 then
+_rootsTick = rt
+if resolveRoots() then requestScan() end
+end
 if not running then return end
 local myChar = lp.Character
 local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
