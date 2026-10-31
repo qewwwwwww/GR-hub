@@ -1,4 +1,6 @@
-return function(Library, Window)
+return function(Library, Window, GHub)
+local genv = (type(getgenv) == "function") and getgenv() or _G
+GHub = GHub or genv.GRHub
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -1759,5 +1761,15 @@ local WlTab = Window:AddTab("白名单", "shield")
 local wL = WlTab:AddLeftGroupbox("白名单管理", "user")
 wL:AddInput("scpWl", { Text = "添加白名单", Default = "", Placeholder = "输入玩家名", Finished = true, Callback = function(v) if v and v ~= "" then addWL(v) end end })
 wL:AddButton({ Text = "清空白名单", Func = function() for n in pairs(WL) do WL[n] = nil end; Library:Notify("白名单已清空", 3) end })
-Library:Notify("SCP 功能已加载", 3)
+Library:Notify("SCP 功能已加载（默认关闭）", 3)
+if GHub and GHub.RegisterModule then
+GHub.RegisterModule("scp异常站点", { Name = "scp异常站点", CombatTab = CombatTab, EspTab = EspTab, FunTab = FunTab, WlTab = WlTab, Options = Library.Options, Unload = function() pcall(Unload) end })
+end
+if GHub and GHub.RegisterTab then
+GHub.RegisterTab("战斗", CombatTab)
+GHub.RegisterTab("透视", EspTab)
+GHub.RegisterTab("娱乐", FunTab)
+GHub.RegisterTab("白名单", WlTab)
+end
+return { Name = "scp异常站点", CombatTab = CombatTab, EspTab = EspTab, FunTab = FunTab, WlTab = WlTab, Options = Library.Options, Unload = function() pcall(Unload) end }
 end
