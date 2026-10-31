@@ -147,7 +147,7 @@ if not res then
 local n = string.lower(m.Name or "")
 for _, root in ipairs(EXCLUDE_MODEL_ROOTS) do
 if m:IsDescendantOf(root) then
-if string.find(n, "spooky", 1, true) or string.find(n, "hollow", 1, true) then
+if not (string.find(n, "spooky", 1, true) or string.find(n, "hollow", 1, true)) then
 res = true
 break
 end
