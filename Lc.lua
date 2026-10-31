@@ -136,17 +136,22 @@ if not m then return false end
 local v = _excludeCache[m]
 if v ~= nil then return v end
 local res = false
+if m:IsA("Model") then
 for _, root in ipairs(EXCLUDE_ROOTS) do
 if m:IsDescendantOf(root) then
 res = true
 break
 end
 end
-if not res and m:IsA("Model") then
+if not res then
+local n = string.lower(m.Name or "")
 for _, root in ipairs(EXCLUDE_MODEL_ROOTS) do
 if m:IsDescendantOf(root) then
+if string.find(n, "spooky", 1, true) or string.find(n, "hollow", 1, true) then
 res = true
 break
+end
+end
 end
 end
 end
