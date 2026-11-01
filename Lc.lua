@@ -14,7 +14,6 @@ GHub = GHub or C.genv.GRHub
  C.LOG_ENABLED = false
  C.FX_ENABLED = true
  C.USE_NATIVE_TRACER = false
- C.AIM_RAY_FROM_MUZZLE = false
  C.BULLET_SPEED = 1600
  C.BULLET_VELOCITY = nil
 pcall(function() C.BULLET_VELOCITY = workspace:GetAttribute("BulletVelocity") end)
@@ -1430,13 +1429,6 @@ onMyRespawn(c)
 hookMuzzleEvents(c)
 end)
 local function getShootOrigin(myChar)
-if C.AIM_RAY_FROM_MUZZLE then
-local m = getMuzzlePart()
-if m then
-if m:IsA("BasePart") then return m.Position, "MUZZLE" end
-return m.WorldPosition, "MUZZLE"
-end
-end
 local ok1, gp = pcall(getGameBodyHead)
 if ok1 and typeof(gp) == "Vector3" then return gp, "HEAD" end
 local h = myChar and getAimPart(myChar)
@@ -1739,16 +1731,7 @@ end
 for _, c in ipairs(C._playerChars) do collect(c) end
 for _, c in ipairs(C._npcChars) do collect(c) end
 if n > 1 then
-local cam = C.Workspace.CurrentCamera
-if cam then
-local cd = cam.CFrame.LookVector
-table.sort(C._candBuf, function(a, b)
-if math.abs(a.d - b.d) > 8 then return a.d < b.d end
-return a.dot:Dot(cd) > b.dot:Dot(cd)
-end)
-else
 table.sort(C._candBuf, function(a, b) return a.d < b.d end)
-end
 end
 return n
 end
@@ -1852,28 +1835,6 @@ end
  C._lastSendErr = ""
  C._lastFail = "未开火"
  C._lastGun = "无"
- C.REAL_AIM = true
-local function aimAt(pos)
-local cam = C.Workspace.CurrentCamera
-if cam then
-pcall(function()
-local cp = cam.CFrame.Position
-if (pos - cp).Magnitude > 0.01 then
-cam.CFrame = CFrame.lookAt(cp, pos)
-end
-end)
-end
-local c = C.lp.Character
-if not c then return end
-local hrp = c:FindFirstChild("HumanoidRootPart")
-if not hrp then return end
-pcall(function()
-local flat = Vector3.new(pos.X, hrp.Position.Y, pos.Z)
-if (flat - hrp.Position).Magnitude > 0.01 then
-hrp.CFrame = CFrame.lookAt(hrp.Position, flat)
-end
-end)
-end
 local function fire(t)
 C._fireCalls = C._fireCalls + 1
 if not alive(t) then C._lastFail = "F1目标非存活"; return false end
@@ -1892,15 +1853,7 @@ if not origin then origin = mH.Position end
 local shootDir = tH.Position - origin
 if shootDir.Magnitude < 0.001 then C._lastFail = "F6方向无效"; return false end
 shootDir = shootDir.Unit
-if C.REAL_AIM then aimAt(tH.Position) end
 local realDir = shootDir
-pcall(function()
-local cam = C.Workspace.CurrentCamera
-if cam then
-local lv = cam.CFrame.LookVector
-if lv.Magnitude > 0.5 then realDir = lv.Unit end
-end
-end)
 local stamp = nextStamp()
 C._lastGun = gun.Name
 pcall(function()
@@ -2074,8 +2027,19 @@ resetOnDeath()
 return
 end
 local now = os.clock()
-if C.state == "RELOAD" and now >= C.reloadUntil then
+if C.state == "RELOAD" then
+if now < C.reloadUntil then
+if C.target then releaseTarget() end
+return
+end
 C.state = "IDLE"
+C.target = nil
+C._targetReady = false
+C._lockStart = 0
+C._losLostAt = 0
+C._lastLosTime = now
+C._lastVerifyTime = now
+if C.requestScan then C.requestScan() end
 end
 if C.target and (now - C._lastVerifyTime) >= 0.2 then
 C._lastVerifyTime = now
