@@ -1130,6 +1130,33 @@ end)
  C.MAX_FILTER_ITEMS = 200
  C.USE_ZONE_CACHE_IN_FILTER = false
  C.OBSTRUCTION_BLACKLIST = {}
+ C.BLOCKED_CONTAINER_NAMES = {
+BuildingsContainer = true,
+BuildingContainer = true,
+}
+ C._contCache = {}
+ C._contProbeTTL = 2.0
+ C._blockedRemoved = 0
+ C._buildDiag = "-"
+local function resolveContainer(name)
+local now = os.clock()
+local e = C._contCache[name]
+if e and (now - e.t) < C._contProbeTTL then
+if e.obj and e.obj.Parent then return e.obj end
+if not e.obj then return nil end
+end
+local obj = nil
+pcall(function()
+local c = C.Workspace:FindFirstChild(name)
+if not c then return end
+if typeof(c) ~= "Instance" then return end
+local okc, n = pcall(function() return #c:GetChildren() end)
+if not okc or not n or n <= 0 then return end
+obj = c
+end)
+C._contCache[name] = { t = now, obj = obj }
+return obj
+end
 local function getObstructionBlacklist()
 if #C.OBSTRUCTION_BLACKLIST > 0 then return C.OBSTRUCTION_BLACKLIST end
 if C.SharedModuleFunctions
@@ -1219,6 +1246,30 @@ for _, p in ipairs(C.Players:GetPlayers()) do
 local c = p.Character
 if n >= C.MAX_FILTER_ITEMS then break end
 if c and c ~= C.lp.Character then n = n + 1; list[n] = c end
+end
+end
+do
+local clean, removed = {}, 0
+for i = 1, #list do
+local v = list[i]
+if v and typeof(v) == "Instance" and v.Parent == C.Workspace and C.BLOCKED_CONTAINER_NAMES[v.Name] then
+removed = removed + 1
+else
+clean[#clean + 1] = v
+end
+end
+if removed > 0 then list = clean end
+C._blockedRemoved = removed
+end
+do
+local bc = resolveContainer("BuildingsContainer")
+if bc then
+local okc, cnt = pcall(function() return #bc:GetChildren() end)
+local okd, deep = pcall(function() return #bc:GetDescendants() end)
+C._buildDiag = string.format("已计入遮挡(%s组/%s件)",
+tostring(okc and cnt or 0), tostring(okd and deep or 0))
+else
+C._buildDiag = "容器未找到或为空"
 end
 end
 C._filterCache = list
@@ -2121,7 +2172,7 @@ if type(cf) == "boolean" then fireStr = tostring(cf) end
 end
 local tg = C.target and (C.target.Name or "?") or "无"
 C.diagLabel:SetText(string.format(
-"状态:%s | 启动:%s | 死亡:%s\n目标:%s | 视线:%s\n枪:%s | 弹:%s | 可开火:%s\nPR:%s | 开火:%d | 包成:%d 败:%d\n最后:%s",
+"状态:%s | 启动:%s | 死亡:%s\n目标:%s | 视线:%s\n枪:%s | 弹:%s | 可开火:%s\nPR:%s | 开火:%d | 包成:%d 败:%d\n建筑遮挡:%s | 守门剔除:%d\n最后:%s",
 tostring(C.state),
 C.running and "开" or "关",
 C.isDead and "是" or "否",
@@ -2130,6 +2181,8 @@ C._targetReady and "通" or "断",
 C._lastGun, ammoStr, fireStr,
 PR_OK and "已连接" or "缺失",
 C._fireCalls, C._packetsSent, C._packetsFail,
+tostring(C._buildDiag),
+C._blockedRemoved or 0,
 C._lastFail))
 end)
 end
