@@ -427,40 +427,6 @@ Default = false,
 Tooltip = "额外补发 ByteNet 87号包(起点+终点)。如果服务器只认 ByteNet 注册就打开",
 Callback = function(v) C.USE_BYTENET_SHOOT = v end,
 })
-C.rR:AddToggle("swBld", {
-Text = "攻击建筑",
-Default = false,
-Tooltip = "索敌时把敌方建筑(工兵建筑)也算目标；复用枪械的射线与弹道包，己方建筑不打",
-Callback = function(v)
-C.ATTACK_BUILDINGS = v
-C._bldScanAt = 0
-if not v then
-if C._bldUI then
-for m, ui in pairs(C._bldUI) do pcall(function() ui:Destroy() end) end
-C._bldUI = setmetatable({}, { __mode = "k" })
-end
-C._bldConstruct = nil
-end
-if C.requestScan then C.requestScan() end
-end,
-})
-C.rR:AddSlider("sldBldRange", {
-Text = "建筑搜索距离",
-Default = 250,
-Min = 50,
-Max = 800,
-Rounding = 0,
-Callback = function(v)
-C.BUILDING_RANGE = v
-C._bldScanAt = 0
-end,
-})
-C.rR:AddToggle("swBldFirst", {
-Text = "建筑优先",
-Default = false,
-Tooltip = "开：优先打最近的建筑；关：只在没有敌人可打时才打建筑",
-Callback = function(v) C.BUILDING_PRIORITY = v end,
-})
 C.mR:AddButton({
 Text = "立即重扫",
 Func = function()
@@ -659,20 +625,8 @@ if not res then res = isBotModel(c) end
 C._isNpc[c] = res
 return res
 end
-local isFriendlyConstruct
 local function alive(c)
 if not c or not c.Parent then return false end
--- 建筑：没有 Humanoid，但带 StructureHitbox 且有血量
-do
-local hb0 = c:FindFirstChild("StructureHitbox")
-if hb0 and hb0:IsA("BasePart") then
-local hp = c:GetAttribute("Health")
-if type(hp) == "number" and hp > 0 and not c:GetAttribute("CannotHit") then
-return true
-end
-return false
-end
-end
 local h = humOf(c)
 if not h or not h.Parent then return false end
 if h.Health <= 0 then return false end
@@ -772,13 +726,6 @@ end)
 local function canAttack(c)
 if not c then return false end
 if not alive(c) then return false end
--- 建筑：走和角色同一条管线
-if C.ATTACK_BUILDINGS then
-local hb2 = c:FindFirstChild("StructureHitbox")
-if hb2 and hb2:IsA("BasePart") then
-return not isFriendlyConstruct(c)
-end
-end
 if c:GetAttribute("Immortal") then return false end
 if c:GetAttribute("epoch") then return false end
 if C.TEAM_CHECK and not isEnemyChar(c) then return false end
@@ -859,8 +806,7 @@ local function getAimPart(c)
 if not c then return nil end
 local p = C._aimPart[c]
 if p and p.Parent then return p end
-p = c:FindFirstChild("StructureHitbox")
-or c:FindFirstChild("Head")
+p = c:FindFirstChild("Head")
 or c:FindFirstChild("UpperTorso")
 or c:FindFirstChild("Torso")
 or c:FindFirstChild("HumanoidRootPart")
@@ -1895,26 +1841,8 @@ dot = aimPart.Position - fromPos,
 end
 for _, c in ipairs(C._playerChars) do collect(c) end
 for _, c in ipairs(C._npcChars) do collect(c) end
--- 建筑并入同一条管线：alive/canAttack/射线/锁定全部复用
-if C.ATTACK_BUILDINGS then
-for _, e in ipairs(scanBuildings()) do
-if e.c.Parent and e.hb.Parent and alive(e.c) and canAttack(e.c) then
-local d = (e.hb.Position - fromPos).Magnitude
-if d <= C.MAX_DIST then
-n = n + 1
-C._candBuf[n] = { c = e.c, d = d, bld = true, dot = e.hb.Position - fromPos }
-end
-end
-end
-end
 if n > 1 then
-table.sort(C._candBuf, function(a, b)
-local ab, bb2 = a.bld == true, b.bld == true
-if ab ~= bb2 then
-return C.BUILDING_PRIORITY == ab
-end
-return a.d < b.d
-end)
+table.sort(C._candBuf, function(a, b) return a.d < b.d end)
 end
 return n
 end
@@ -2044,13 +1972,6 @@ end
  C._lastGun = "无"
 local function fire(t)
 C._fireCalls = C._fireCalls + 1
--- 目标是建筑 → 走建筑发包(复用同一套弹道包与射线)
-if C.ATTACK_BUILDINGS and t then
-local hb0 = t:FindFirstChild("StructureHitbox")
-if hb0 and hb0:IsA("BasePart") then
-return fireConstruct(t, hb0)
-end
-end
 if not alive(t) then C._lastFail = "F1目标非存活"; return false end
 if isExcludedModel(t) then C._lastFail = "F2目标被过滤"; return false end
 if not canAttack(t) then C._lastFail = "F3目标不可攻击"; return false end
@@ -2168,35 +2089,9 @@ C._losLostAt = 0
 C._lastLosTime = 0
 C._lastVerifyTime = 0
 end
---============ 攻击建筑 ============
--- 真正的发包(ByteNet): RemoteEvent = ReplicatedStorage.ByteNetReliable
---   建筑命中: buffer {83,1,2} + 实例数组 { Construct, Gun }
---   射击注册: buffer {87,1,28,1} + 6个f32(起点xyz + 终点xyz) + { Gun }
--- 目标判定(client_ToolEffects): 模型内有 StructureHitbox、Health>0、无 CannotHit；己方不打
- C.ATTACK_BUILDINGS = false
- C.BUILDING_RANGE = 250
- C.BUILDING_PRIORITY = false
- CONSTRUCT_BUSY = false
- C._bldCalls = 0
- C._bldHits = 0
- C._bldBlockedReason = "-"
  C.BYTE_EVT_NAME = "ByteNetReliable"
- C.BYTE_CONSTRUCT = { 83, 1, 2 }
  C.BYTE_SHOOT_HEAD = { 87, 1, 28, 1 }
  C.USE_BYTENET_SHOOT = false
- C._byteEvt = nil
-local function byteEvent()
-if C._byteEvt and C._byteEvt.Parent then return C._byteEvt end
-pcall(function()
-C._byteEvt = C.Replicated:FindFirstChild(C.BYTE_EVT_NAME)
-end)
-return C._byteEvt
-end
-local function mkBuffer(bytes)
-local b = buffer.create(#bytes)
-for i = 1, #bytes do buffer.writeu8(b, i - 1, bytes[i]) end
-return b
-end
 local function mkShootBuffer(origin, endPos)
 local head = C.BYTE_SHOOT_HEAD
 local b = buffer.create(#head + 24)
@@ -2211,239 +2106,6 @@ buffer.writef32(b, off, endPos.Z)
 return b
 end
 C._mkShootBuffer = mkShootBuffer
- C._bldConstruct = nil
- C._bldSeen = setmetatable({}, { __mode = "k" })
- C._bldList = {}
- C._bldScanAt = 0
- C._bldBlocked = 0
-local function buildRootOf(inst)
-if not inst then return nil end
-local cur, guard = inst, 0
-while cur and cur ~= C.Workspace and guard < 12 do
-local hb = cur:FindFirstChild("StructureHitbox")
-if hb and hb:IsA("BasePart") then return cur, hb end
-cur = cur.Parent
-guard = guard + 1
-end
-return nil
-end
-local function resolveConstruct(inst)
-if not inst then return nil end
-local m = inst:FindFirstAncestorWhichIsA("Model")
-local guard = 0
-while m and guard < 6 do
-guard = guard + 1
-local hb = m:FindFirstChild("StructureHitbox")
-if hb and hb:IsA("BasePart") then return m, hb end
-m = m:FindFirstAncestorWhichIsA("Model")
-end
-return nil
-end
-C._resolveConstruct = resolveConstruct
-local function constructInfo(m)
-if not m or not m.Parent then return nil end
-local hb = m:FindFirstChild("StructureHitbox")
-if not hb or not hb:IsA("BasePart") then return nil end
-if m:GetAttribute("CannotHit") then return nil end
-local hp = m:GetAttribute("Health")
-if type(hp) ~= "number" or hp <= 0 then return nil end
-return hb
-end
-isFriendlyConstruct = function(m)
-if not C.PlayerUtility then return false end
-local ok, res = pcall(function()
-if type(C.PlayerUtility.IsTeammatePlacedEquipment) == "function"
-and C.PlayerUtility:IsTeammatePlacedEquipment(C.lp, m) then
-return true
-end
-if type(C.PlayerUtility.IsFriendlyTeamConstruct) == "function"
-and C.PlayerUtility:IsFriendlyTeamConstruct(C.lp, m) then
-return true
-end
-return false
-end)
-return ok and res == true
-end
-local function scanBuildings()
-local now = os.clock()
-if now - C._bldScanAt < 1 then return C._bldList end
-C._bldScanAt = now
-local char = C.lp.Character
-local hrp = char and char:FindFirstChild("HumanoidRootPart")
-local origin = hrp and hrp.Position or (char and getAimPart(char) and getAimPart(char).Position)
-local out = {}
-if not origin then C._bldList = out; return out end
-local roots = {}
-local bc = resolveContainer("BuildingsContainer")
-if bc then roots[#roots + 1] = bc end
-local mc = C.Workspace:FindFirstChild("MapContainer")
-if mc then
-local it = mc:FindFirstChild("Interactables")
-if it then roots[#roots + 1] = it end
-end
-local seen = C._bldSeen or {}
-table.clear(seen)
-for _, root in ipairs(roots) do
--- 只查两层：StructureHitbox 是建筑 Model 的直接子级，
--- 不用 GetDescendants(会把建筑几百个部件全遍历一遍，很卡)
-pcall(function()
-local function checkModel(mdl)
-if seen[mdl] then return end
-seen[mdl] = true
-local info = constructInfo(mdl)
-if info and not isFriendlyConstruct(mdl) then
-local dist = (info.Position - origin).Magnitude
-if dist <= C.BUILDING_RANGE then
-out[#out + 1] = { c = mdl, hb = info, d = dist }
-end
-end
-end
-for _, child in ipairs(root:GetChildren()) do
-if child:IsA("Model") then
-checkModel(child)
-elseif child:IsA("Folder") or child:IsA("Configuration") then
-for _, sub in ipairs(child:GetChildren()) do
-if sub:IsA("Model") then checkModel(sub) end
-end
-end
-end
-end)
-end
-table.sort(out, function(a, b) return a.d < b.d end)
-C._bldList = out
-C._bldSeen = seen
-return out
-end
-local function clearConstructUI(m)
-local ui = C._bldUI and C._bldUI[m]
-if not ui then return end
-C._bldUI[m] = nil
-pcall(function() ui:Destroy() end)
-end
-local function markConstruct(m, hb)
-if not C._bldUI then C._bldUI = setmetatable({}, { __mode = "k" }) end
-local old = C._bldUI[m]
-if old and old.Parent then return end
-local bb = Instance.new("BillboardGui")
-bb.Name = "GRBuildMark"
-bb.Size = UDim2.new(0, 34, 0, 34)
-bb.AlwaysOnTop = true
-bb.Adornee = hb
-bb.Parent = C.lockFolder
-local box = Instance.new("Frame")
-box.Size = UDim2.new(1, 0, 1, 0)
-box.BackgroundTransparency = 1
-box.Parent = bb
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(255, 150, 0)
-stroke.Thickness = 2
-stroke.Parent = box
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(1, 0)
-corner.Parent = box
-local lbl = Instance.new("TextLabel")
-lbl.Size = UDim2.new(1, 0, 1, 0)
-lbl.BackgroundTransparency = 1
-lbl.Text = "建"
-lbl.TextColor3 = Color3.fromRGB(255, 190, 80)
-lbl.TextScaled = true
-lbl.Font = Enum.Font.GothamBold
-lbl.Parent = box
-pcall(function()
-C.TweenService:Create(box, TweenInfo.new(4, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1),
-{ Rotation = 360 }):Play()
-end)
-C._bldUI[m] = bb
-end
-local function fireConstruct(m, hb)
-local gun = getEquippedGun() or getGun()
-if not gun then C._lastFail = "B1无枪械"; return false end
-if not hb or not hb.Parent then C._lastFail = "B3建筑已失效"; return false end
-local mH = C.lp.Character and getAimPart(C.lp.Character)
-local origin = getShootOrigin(C.lp.Character) or (mH and mH.Position)
-if not origin then C._lastFail = "B4无起点"; return false end
-local aimPos = hb.Position
-if C.FX_ENABLED then
-local tracerStart = origin + ((aimPos - origin).Unit * math.min(C.TRACER_LENGTH, 10))
-drawTracer(tracerStart, aimPos)
-end
-pcall(function()
-local s = Instance.new("Sound")
-s.SoundId = "rbxassetid://8679627751"
-s.Volume = 1
-s.Parent = C.Workspace
-s:Play()
-task.delay(3, function() pcall(s.Destroy, s) end)
-end)
-C._bldCalls = (C._bldCalls or 0) + 1
--- ① 走枪械那条射击路径：和 fire() 完全同一套结构/包
-local shootDir = aimPos - origin
-if shootDir.Magnitude < 0.001 then
-shootDir = Vector3.new(0, 0, -1)
-else
-shootDir = shootDir.Unit
-end
-local stamp = nextStamp()
-local bdata = {
-Gun = gun,
-Vector = shootDir,
-epoch = stamp,
-bulletOrigin = origin,
-bulletEnd = aimPos,
-rngSeed = nextSeed(),
-otherCharacter = m,
-hitLimb = hb.Name,
-hitTimestamp = stamp,
-clientHitPosition = aimPos,
-clientVictimPosition = (m.PrimaryPart and m.PrimaryPart.Position) or aimPos
-}
-if PR_OK then
-task.spawn(function()
-for _, n in ipairs({ "ShootRegistration", "ReplicateGunShot" }) do
-pcall(function()
-local r = C.PR[n]
-if r and r.send then r.send(bdata) end
-end)
-task.wait(C.PACKET_DELAY)
-end
-end)
-end
-if C.USE_BYTENET_SHOOT and C._mkShootBuffer then
-pcall(function()
-local ev2 = C.Replicated:FindFirstChild(C.BYTE_EVT_NAME or "ByteNetReliable")
-if ev2 then ev2:FireServer(C._mkShootBuffer(origin, aimPos), { gun }) end
-end)
-end
--- ② 建筑伤害本体：ByteNet 83号 { 建筑, 枪 }
-local ev = byteEvent()
-if ev then
-local ok, err = pcall(function()
-ev:FireServer(mkBuffer(C.BYTE_CONSTRUCT), { m, gun })
-end)
-if ok then
-C._lastFail = "OK(建筑)"
-C._bldHits = (C._bldHits or 0) + 1
-return true
-end
-C._lastFail = "B6ByteNet失败:" .. tostring(err)
-end
--- ③ 回退：packet gunshotConstructHit
-if PR_OK then
-local ok2, err2 = pcall(function()
-C.PR.gunshotConstructHit.send({ Gun = gun, Construct = m })
-end)
-if ok2 then
-C._lastFail = "OK(建筑·PR)"
-C._bldHits = (C._bldHits or 0) + 1
-return true
-end
-C._lastFail = "B5发包失败:" .. tostring(err2)
-else
-C._lastFail = "B2无ByteNet且PR缺失"
-end
-C._bldBlocked = (C._bldBlocked or 0) + 1
-return false
-end
 local function startReload()
 C.state = "RELOAD"
 C.reloadUntil = os.clock() + C.RELOAD_TIME
