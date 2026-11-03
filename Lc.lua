@@ -418,6 +418,60 @@ end,
 })
  C.getGunDiag = nil
  C.nowStamp = nil
+ C.bTab = Window:AddTab("建筑", "hammer") or AimTab
+ C.bL = C.bTab:AddLeftGroupbox("攻击建筑", "hammer")
+ C.bR = C.bTab:AddRightGroupbox("说明", "info")
+C.bL:AddToggle("swBld", {
+Text = "攻击建筑",
+Default = false,
+Tooltip = "自动索敌时把敌方建筑(工兵建筑)也当作目标；己方建筑不打",
+Callback = function(v)
+C.ATTACK_BUILDINGS = v
+C._bldScanAt = 0
+if not v and C._bldUI then
+for m, ui in pairs(C._bldUI) do pcall(function() ui:Destroy() end) end
+C._bldUI = setmetatable({}, { __mode = "k" })
+C._bldConstruct = nil
+end
+if C.requestScan then C.requestScan() end
+end,
+})
+C.bL:AddSlider("sldBldRange", {
+Text = "建筑搜索距离",
+Default = 250,
+Min = 50,
+Max = 800,
+Rounding = 0,
+Callback = function(v)
+C.BUILDING_RANGE = v
+C._bldScanAt = 0
+end,
+})
+C.bL:AddToggle("swBldFirst", {
+Text = "建筑优先",
+Default = false,
+Tooltip = "开：优先打最近建筑；关：建筑只在没有敌人可打时才打",
+Callback = function(v) C.BUILDING_PRIORITY = v end,
+})
+C.bL:AddButton({
+Text = "立即打一个建筑",
+Func = function()
+local list = scanBuildings()
+if #list == 0 then
+Library:Notify("周围没有可攻击的敌方建筑", 3)
+return
+end
+local e = list[1]
+if fireConstruct(e.c, e.hb) then
+startReload()
+Library:Notify("已攻击建筑: " .. e.c.Name, 3)
+else
+Library:Notify("攻击失败: " .. tostring(C._lastFail), 4)
+end
+end,
+})
+C.bR:AddLabel("只攻击带 StructureHitbox 且有血量(Health>0)的建筑，CannotHit 与己方建筑自动跳过。")
+C.bR:AddLabel("发包: gunshotConstructHit { Gun, Construct }")
  C.mL = MiscTab:AddLeftGroupbox("状态", "activity")
  C.mR = MiscTab:AddRightGroupbox("操作", "wrench")
  C.diagLabel = C.mL:AddLabel("等待数据...")
@@ -1212,7 +1266,24 @@ end
 end
 if C.ClientCursor and type(C.ClientCursor.GetCursorRayFilteredDescendants) == "function" then
 local ok2, r = pcall(function() return C.ClientCursor.GetCursorRayFilteredDescendants() end)
-if ok2 and type(r) == "table" then cursorFiltered = r end
+if ok2 and type(r) == "table" then
+-- 只保留"角色"条目。游戏的光标黑名单包含 fx_NoCursorObstruction /
+-- fx_GlassFracture / Barriers 的静态物件(工兵建筑常带前者)，
+-- 照抄会让射线直接忽略建筑 —— 官方子弹判定用的是
+-- _GunshotObstructionBlacklist()，并不包含这些，所以这里必须过滤掉。
+cursorFiltered = {}
+for _, v in ipairs(r) do
+if typeof(v) == "Instance" then
+local m
+pcall(function()
+m = v:IsA("Model") and v or v:FindFirstAncestorWhichIsA("Model")
+end)
+if m and m:FindFirstChildWhichIsA("Humanoid") then
+cursorFiltered[#cursorFiltered + 1] = v
+end
+end
+end
+end
 end
 local combined
 if C.QuickCreate and type(C.QuickCreate.CombineArrays) == "function" then
@@ -1259,10 +1330,19 @@ if c and c ~= C.lp.Character then n = n + 1; list[n] = c end
 end
 end
 do
+local bc = resolveContainer("BuildingsContainer")
 local clean, removed = {}, 0
 for i = 1, #list do
 local v = list[i]
-if v and typeof(v) == "Instance" and v.Parent == C.Workspace and C.BLOCKED_CONTAINER_NAMES[v.Name] then
+local drop = false
+if not v or typeof(v) ~= "Instance" then
+drop = true
+elseif bc and (v == bc or v:IsDescendantOf(bc)) then
+drop = true
+elseif v.Parent == C.Workspace and C.BLOCKED_CONTAINER_NAMES[v.Name] then
+drop = true
+end
+if drop then
 removed = removed + 1
 else
 clean[#clean + 1] = v
@@ -1528,6 +1608,23 @@ if not first then first = p end
 local hit = ballisticRay(origin, p.Position, params)
 if not hit or hit.Instance:IsDescendantOf(targetModel) then
 return p, true
+end
+-- 诊断：记录"挡住射线的到底是谁"(0.5 秒记一次，开销可忽略)
+local bt = os.clock()
+if bt - (C._blockAt or 0) > 0.5 then
+C._blockAt = bt
+pcall(function()
+local inst = hit.Instance
+local par = inst.Parent
+C._lastBlock = tostring(inst.Name) .. " <- " .. (par and tostring(par.Name) or "?")
+local top = inst
+local guard = 0
+while top.Parent and top.Parent ~= C.Workspace and guard < 8 do
+top = top.Parent
+guard = guard + 1
+end
+C._lastBlockRoot = tostring(top.Name)
+end)
 end
 if not C.AIM_PART_FALLBACK then
 return first, false
@@ -2030,6 +2127,186 @@ C._losLostAt = 0
 C._lastLosTime = 0
 C._lastVerifyTime = 0
 end
+--============ 攻击建筑 ============
+-- 官方入口：PacketReference.gunshotConstructHit  { Gun=枪, Construct=建筑Model }
+-- 判定依据(来自 client_ToolEffects): 模型内有 StructureHitbox、
+-- 模型属性 Health>0、没有 CannotHit；己方建筑不打。
+ C.ATTACK_BUILDINGS = false
+ C.BUILDING_RANGE = 250
+ C.BUILDING_PRIORITY = false
+ CONSTRUCT_BUSY = false
+ C._bldCalls = 0
+ C._bldHits = 0
+ C._bldBlockedReason = "-"
+ C._bldConstruct = nil
+ C._bldSeen = setmetatable({}, { __mode = "k" })
+ C._bldList = {}
+ C._bldScanAt = 0
+ C._bldBlocked = 0
+local function buildRootOf(inst)
+if not inst then return nil end
+local cur, guard = inst, 0
+while cur and cur ~= C.Workspace and guard < 12 do
+local hb = cur:FindFirstChild("StructureHitbox")
+if hb and hb:IsA("BasePart") then return cur, hb end
+cur = cur.Parent
+guard = guard + 1
+end
+return nil
+end
+local function resolveConstruct(inst)
+if not inst then return nil end
+local m = inst:FindFirstAncestorWhichIsA("Model")
+local guard = 0
+while m and guard < 6 do
+guard = guard + 1
+local hb = m:FindFirstChild("StructureHitbox")
+if hb and hb:IsA("BasePart") then return m, hb end
+m = m:FindFirstAncestorWhichIsA("Model")
+end
+return nil
+end
+C._resolveConstruct = resolveConstruct
+local function constructInfo(m)
+if not m or not m.Parent then return nil end
+local hb = m:FindFirstChild("StructureHitbox")
+if not hb or not hb:IsA("BasePart") then return nil end
+if m:GetAttribute("CannotHit") then return nil end
+local hp = m:GetAttribute("Health")
+if type(hp) ~= "number" or hp <= 0 then return nil end
+return hb
+end
+local function isFriendlyConstruct(m)
+if not C.PlayerUtility then return false end
+local ok, res = pcall(function()
+if type(C.PlayerUtility.IsTeammatePlacedEquipment) == "function"
+and C.PlayerUtility:IsTeammatePlacedEquipment(C.lp, m) then
+return true
+end
+if type(C.PlayerUtility.IsFriendlyTeamConstruct) == "function"
+and C.PlayerUtility:IsFriendlyTeamConstruct(C.lp, m) then
+return true
+end
+return false
+end)
+return ok and res == true
+end
+local function scanBuildings()
+local now = os.clock()
+if now - C._bldScanAt < 1 then return C._bldList end
+C._bldScanAt = now
+local char = C.lp.Character
+local hrp = char and char:FindFirstChild("HumanoidRootPart")
+local origin = hrp and hrp.Position or (char and getAimPart(char) and getAimPart(char).Position)
+local out = {}
+if not origin then C._bldList = out; return out end
+local roots = {}
+local bc = resolveContainer("BuildingsContainer")
+if bc then roots[#roots + 1] = bc end
+local mc = C.Workspace:FindFirstChild("MapContainer")
+if mc then
+local it = mc:FindFirstChild("Interactables")
+if it then roots[#roots + 1] = it end
+end
+local seen = {}
+for _, root in ipairs(roots) do
+pcall(function()
+for _, d in ipairs(root:GetDescendants()) do
+if d.Name == "StructureHitbox" and d:IsA("BasePart") then
+local m = d.Parent
+if m and m:IsA("Model") and not seen[m] then
+seen[m] = true
+local info = constructInfo(m)
+if info and not isFriendlyConstruct(m) then
+local dist = (info.Position - origin).Magnitude
+if dist <= C.BUILDING_RANGE then
+out[#out + 1] = { c = m, hb = info, d = dist }
+end
+end
+end
+end
+end
+end)
+end
+table.sort(out, function(a, b) return a.d < b.d end)
+C._bldList = out
+C._bldSeen = seen
+return out
+end
+local function clearConstructUI(m)
+local ui = C._bldUI and C._bldUI[m]
+if not ui then return end
+C._bldUI[m] = nil
+pcall(function() ui:Destroy() end)
+end
+local function markConstruct(m, hb)
+if not C._bldUI then C._bldUI = setmetatable({}, { __mode = "k" }) end
+local old = C._bldUI[m]
+if old and old.Parent then return end
+local bb = Instance.new("BillboardGui")
+bb.Name = "GRBuildMark"
+bb.Size = UDim2.new(0, 34, 0, 34)
+bb.AlwaysOnTop = true
+bb.Adornee = hb
+bb.Parent = C.lockFolder
+local box = Instance.new("Frame")
+box.Size = UDim2.new(1, 0, 1, 0)
+box.BackgroundTransparency = 1
+box.Parent = bb
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(255, 150, 0)
+stroke.Thickness = 2
+stroke.Parent = box
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(1, 0)
+corner.Parent = box
+local lbl = Instance.new("TextLabel")
+lbl.Size = UDim2.new(1, 0, 1, 0)
+lbl.BackgroundTransparency = 1
+lbl.Text = "建"
+lbl.TextColor3 = Color3.fromRGB(255, 190, 80)
+lbl.TextScaled = true
+lbl.Font = Enum.Font.GothamBold
+lbl.Parent = box
+pcall(function()
+C.TweenService:Create(box, TweenInfo.new(4, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1),
+{ Rotation = 360 }):Play()
+end)
+C._bldUI[m] = bb
+end
+local function fireConstruct(m, hb)
+local gun = getEquippedGun() or getGun()
+if not gun then C._lastFail = "B1无枪械"; return false end
+if not PR_OK then C._lastFail = "B2PR缺失"; return false end
+if not hb or not hb.Parent then C._lastFail = "B3建筑已失效"; return false end
+local mH = C.lp.Character and getAimPart(C.lp.Character)
+local origin = getShootOrigin(C.lp.Character) or (mH and mH.Position)
+if not origin then C._lastFail = "B4无起点"; return false end
+local aimPos = hb.Position
+if C.FX_ENABLED then
+local tracerStart = origin + ((aimPos - origin).Unit * math.min(C.TRACER_LENGTH, 10))
+drawTracer(tracerStart, aimPos)
+end
+pcall(function()
+local s = Instance.new("Sound")
+s.SoundId = "rbxassetid://8679627751"
+s.Volume = 1
+s.Parent = C.Workspace
+s:Play()
+task.delay(3, function() pcall(s.Destroy, s) end)
+end)
+local data = { Gun = gun, Construct = m }
+C._bldCalls = (C._bldCalls or 0) + 1
+local ok, err = pcall(function() C.PR.gunshotConstructHit.send(data) end)
+if ok then
+C._lastFail = "OK(建筑)"
+C._bldHits = (C._bldHits or 0) + 1
+return true
+end
+C._lastFail = "B5发包失败:" .. tostring(err)
+C._bldBlocked = (C._bldBlocked or 0) + 1
+return false
+end
 local function startReload()
 C.state = "RELOAD"
 C.reloadUntil = os.clock() + C.RELOAD_TIME
@@ -2155,6 +2432,41 @@ C._lastLosTime = now
 showLockUI(t)
 end
 end
+-- 攻击建筑：建筑优先 / 无敌人时兜底
+if C.ATTACK_BUILDINGS then
+local function tryBuilding(forceIt)
+if CONSTRUCT_BUSY then return false end
+local list = scanBuildings()
+if #list == 0 then return false end
+local e = list[1]
+if not e.c.Parent then return false end
+if not forceIt then
+-- 需要真正打到建筑：朝它做一次射线，穿透检查用建筑自身当遮挡
+local params = getRaycastParams()
+local mH = getAimPart(myChar)
+local origin = getShootOrigin(myChar) or (mH and mH.Position)
+if not origin then return false end
+local hit = ballisticRay(origin, e.hb.Position, params)
+if hit and not (hit.Instance == e.hb or hit.Instance:IsDescendantOf(e.c)) then
+C._bldBlockedReason = tostring(hit.Instance.Name)
+return false
+end
+end
+CONSTRUCT_BUSY = true
+local okC = fireConstruct(e.c, e.hb)
+CONSTRUCT_BUSY = false
+if okC then
+startReload()
+return true
+end
+return false
+end
+if C.BUILDING_PRIORITY then
+if tryBuilding(false) then return end
+elseif not C.target then
+if tryBuilding(false) then return end
+end
+end
 if C.target then
 if (now - C._lastLosTime) >= C._LOS_INTERVAL then
 C._lastLosTime = now
@@ -2214,7 +2526,7 @@ if type(cf) == "boolean" then fireStr = tostring(cf) end
 end
 local tg = C.target and (C.target.Name or "?") or "无"
 C.diagLabel:SetText(string.format(
-"状态:%s | 启动:%s | 死亡:%s\n目标:%s | 视线:%s\n枪:%s | 弹:%s | 可开火:%s\nPR:%s | 开火:%d | 包成:%d 败:%d\n建筑遮挡:%s | 守门:%d\n候选池:%d (NPC:%d)\n最后:%s",
+"状态:%s | 启动:%s | 死亡:%s\n目标:%s | 视线:%s\n枪:%s | 弹:%s | 可开火:%s\nPR:%s | 开火:%d | 包成:%d 败:%d\n建筑遮挡:%s | 守门:%d\n遮挡物:%s\n候选池:%d (NPC:%d)\n最后:%s",
 tostring(C.state),
 C.running and "开" or "关",
 C.isDead and "是" or "否",
@@ -2225,6 +2537,7 @@ PR_OK and "已连接" or "缺失",
 C._fireCalls, C._packetsSent, C._packetsFail,
 tostring(C._buildDiag),
 C._blockedRemoved or 0,
+(C._lastBlockRoot or "-") .. " / " .. (C._lastBlock or "-"),
 (#C._npcChars or 0) + (#C._playerChars or 0),
 #C._npcChars or 0,
 C._lastFail))
