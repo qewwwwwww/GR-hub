@@ -140,6 +140,11 @@ local cb = misc:FindFirstChild("Special_ColonistBodies")
 if cb then C.EXCLUDE_ROOTS[#C.EXCLUDE_ROOTS + 1] = cb end
 end
 end
+-- 尸体容器：ragdoll 尸体绝不当目标，否则死得越多候选池越大 → 死亡后卡顿
+for _, nm in ipairs({ "Ragdolls", "RagdollContainer", "DeadContainer", "Corpses" }) do
+local r = workspace:FindFirstChild(nm)
+if r then C.EXCLUDE_ROOTS[#C.EXCLUDE_ROOTS + 1] = r end
+end
 end)
  C._excludeCache = setmetatable({}, { __mode = "k" })
 local function isExcludedModel(m)
@@ -511,6 +516,11 @@ end
  C._isNpc = setmetatable({}, { __mode = "k" })
  C._rootsTick = 0
  C._rootSig = ""
+ C.MAX_NPC_POOL = 400
+ C.SCAN_REBUILD_MIN = 0.15
+ C.FULL_SCAN_INTERVAL = 5
+ C.DEAD_POOL_TTL = 8
+ C._deadSeen = setmetatable({}, { __mode = "k" })
 local function resolveRoots()
 local mc = workspace:FindFirstChild("MapContainer")
 if not mc then return false end
@@ -1655,6 +1665,7 @@ invalidateFilterCache()
 end)
 local function addNpcModel(m)
 if not m or not m:IsA("Model") then return false end
+if #C._npcChars >= C.MAX_NPC_POOL then return false end
 if playerOf(m) then return false end
 if m == C.lp.Character then return false end
 if isExcludedModel(m) then return false end
@@ -1791,11 +1802,28 @@ end
  C._lastFullScan = 0
 local function refreshNpcPool()
 resolveRoots()
+local nowX = os.clock()
 for i = #C._npcChars, 1, -1 do
 local m = C._npcChars[i]
-if isExcludedModel(m) then
-poolRemove(C._npcChars, _npcSet, m)
+local drop = false
+if not m.Parent then
+drop = true
+elseif isExcludedModel(m) then
+drop = true
+else
+local h = humOf(m)
+if h and h.Health <= 0 then
+local seen = C._deadSeen[m]
+if not seen then
+C._deadSeen[m] = nowX
+elseif (nowX - seen) > C.DEAD_POOL_TTL then
+drop = true
 end
+else
+C._deadSeen[m] = nil
+end
+end
+if drop then poolRemove(C._npcChars, C._npcSet, m) end
 end
 if C.BOT_FOLDER then
 pcall(function()
@@ -1818,10 +1846,11 @@ end
 end
 end)
 local now = os.clock()
-if now - C._lastFullScan >= 1 then
+if now - C._lastFullScan >= C.FULL_SCAN_INTERVAL then
 C._lastFullScan = now
 pcall(function()
 for _, desc in ipairs(C.Workspace:GetDescendants()) do
+if #C._npcChars >= C.MAX_NPC_POOL then break end
 if desc:IsA("Humanoid") then
 local m = desc.Parent
 if m and m:IsA("Model") and isBotModel(m) then
@@ -1843,7 +1872,8 @@ C._scanRefreshAt = os.clock()
 end
 local function stepScan(myChar)
 if not C._scanValid then
-if SCAN_REFRESH > 0 and (os.clock() - C._scanRefreshAt) < SCAN_REFRESH then
+local gap = SCAN_REFRESH > 0 and SCAN_REFRESH or C.SCAN_REBUILD_MIN
+if (os.clock() - C._scanRefreshAt) < gap then
 return nil
 end
 rebuildScanQueue()
@@ -2004,7 +2034,11 @@ C._scanValid = false
 C._scanRefreshAt = 0
 end
  C.isDead = false
+ C._deadReset = false
 local function resetOnDeath()
+-- 幂等：死亡期间每帧都会走到这里，重置一次就够
+if C._deadReset then return end
+C._deadReset = true
 C.isDead = true
 C.reloadUntil = 0
 C.state = "IDLE"
@@ -2017,6 +2051,7 @@ C._lastLosTime = 0
 C._lastVerifyTime = 0
 C._scanValid = false
 C._scanRefreshAt = 0
+C._lastFullScan = 0
 end
 local function hookMyDeath(c)
 if not c then return end
@@ -2041,11 +2076,13 @@ end)
 end
 if C.lp.Character then
 C.isDead = false
+C._deadReset = false
 hookMyDeath(C.lp.Character)
 end
 C.lp.CharacterAdded:Connect(function(c)
 task.wait(0.3)
 C.isDead = false
+C._deadReset = false
 C.reloadUntil = 0
 C.state = "IDLE"
 C.clearAllLockUI()
@@ -2172,7 +2209,7 @@ if type(cf) == "boolean" then fireStr = tostring(cf) end
 end
 local tg = C.target and (C.target.Name or "?") or "无"
 C.diagLabel:SetText(string.format(
-"状态:%s | 启动:%s | 死亡:%s\n目标:%s | 视线:%s\n枪:%s | 弹:%s | 可开火:%s\nPR:%s | 开火:%d | 包成:%d 败:%d\n建筑遮挡:%s | 守门剔除:%d\n最后:%s",
+"状态:%s | 启动:%s | 死亡:%s\n目标:%s | 视线:%s\n枪:%s | 弹:%s | 可开火:%s\nPR:%s | 开火:%d | 包成:%d 败:%d\n建筑遮挡:%s | 守门:%d\n候选池:%d (NPC:%d)\n最后:%s",
 tostring(C.state),
 C.running and "开" or "关",
 C.isDead and "是" or "否",
@@ -2183,6 +2220,8 @@ PR_OK and "已连接" or "缺失",
 C._fireCalls, C._packetsSent, C._packetsFail,
 tostring(C._buildDiag),
 C._blockedRemoved or 0,
+(#C._npcChars or 0) + (#C._playerChars or 0),
+#C._npcChars or 0,
 C._lastFail))
 end)
 end
