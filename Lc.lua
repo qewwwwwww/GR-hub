@@ -1823,7 +1823,7 @@ else
 C._deadSeen[m] = nil
 end
 end
-if drop then poolRemove(C._npcChars, C._npcSet, m) end
+if drop then poolRemove(C._npcChars, _npcSet, m) end
 end
 if C.BOT_FOLDER then
 pcall(function()
@@ -1876,7 +1876,12 @@ local gap = SCAN_REFRESH > 0 and SCAN_REFRESH or C.SCAN_REBUILD_MIN
 if (os.clock() - C._scanRefreshAt) < gap then
 return nil
 end
-rebuildScanQueue()
+local okR, errR = pcall(rebuildScanQueue)
+if not okR then
+C._scanRefreshAt = os.clock()
+C._lastFail = "scan:" .. tostring(errR)
+return nil
+end
 if not C._scanValid then return nil end
 end
 local deadline = os.clock() + C.SCAN_BUDGET
