@@ -440,42 +440,53 @@ end,
 local antiL = AntiTab:AddLeftGroupbox("反落水", "skull")
 local antiR = AntiTab:AddRightGroupbox("工具", "wrench")
 C.ANTI_DROWN_ENABLED = false
-C.ANTI_DROWN_TASK = nil
+C.ANTI_DROWN_HOOKED = false
+C.ANTI_DROWN_REMOTE = nil
  C.diagLabel = C.mL:AddLabel("等待数据...")
--- 反落水开关
+pcall(function()
+C.ANTI_DROWN_REMOTE = C.Replicated:FindFirstChild("ByteNetReliable")
+end)
+local function isDrownPacket(a)
+if typeof(a) ~= "buffer" then return false end
+local ok, id = pcall(function() return buffer.readu8(a, 0) end)
+return ok and id == 56
+end
+local function isByteNetReliable(self)
+if C.ANTI_DROWN_REMOTE then return self == C.ANTI_DROWN_REMOTE end
+local ok, n = pcall(function() return self.Name end)
+return ok and n == "ByteNetReliable"
+end
+local function installAntiDrown()
+if C.ANTI_DROWN_HOOKED then return true end
+if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" then return false end
+local ok = pcall(function()
+local old
+old = hookmetamethod(game, "__namecall", function(self, ...)
+if C.ANTI_DROWN_ENABLED and getnamecallmethod() == "FireServer" then
+local a = ...
+if isByteNetReliable(self) and isDrownPacket(a) then
+return
+end
+end
+return old(self, ...)
+end)
+end)
+if ok then C.ANTI_DROWN_HOOKED = true end
+return C.ANTI_DROWN_HOOKED
+end
 antiL:AddToggle("swAntiDrown", {
-    Text = "反落水",
-    Default = false,
-    Tooltip = "拦截并发送56号包防止落水踢出",
-    Callback = function(v)
-        C.ANTI_DROWN_ENABLED = v
-        if v and not C.ANTI_DROWN_TASK then
-            C.ANTI_DROWN_TASK = task.spawn(function()
-                while C.ANTI_DROWN_ENABLED do
-                    task.wait(1)
-                    pcall(function()
-                        local Event = C.Replicated:FindFirstChild("ByteNetReliable")
-                        if Event then
-                            Event:FireServer(
-                                (function(bytes)
-                                    local b = buffer.create(#bytes)
-                                    for i = 1, #bytes do
-                                        buffer.writeu8(b, i - 1, bytes[i])
-                                    end
-                                    return b
-                                end)({ 56, 1, 7, 0, 68, 114, 111, 119, 110, 101, 100 }),
-                                nil
-                            )
-                        end
-                    end)
-                end
-                C.ANTI_DROWN_TASK = nil
-            end)
-        elseif not v and C.ANTI_DROWN_TASK then
-            task.cancel(C.ANTI_DROWN_TASK)
-            C.ANTI_DROWN_TASK = nil
-        end
-    end,
+Text = "反落水",
+Default = false,
+Tooltip = "拦截客户端发出的 56 号 Drowned 包，不主动发送",
+Callback = function(v)
+if v and not installAntiDrown() then
+C.ANTI_DROWN_ENABLED = false
+Library:Notify("反落水不可用：执行器缺少 namecall hook", 5)
+if Library.Options.swAntiDrown then Library.Options.swAntiDrown:SetValue(false) end
+return
+end
+C.ANTI_DROWN_ENABLED = v
+end,
 })
 C.rR:AddToggle("swByte", {
 Text = "ByteNet 射击注册",
@@ -2439,12 +2450,12 @@ end
 end)
 Library:Notify("GR 功能已加载", 3)
 if GHub and GHub.RegisterModule then
-GHub.RegisterModule("莱克星顿与康科德", { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, AntiTab = AntiTab, Options = Library.Options, Unload = function() C.running = false; C.state = "IDLE"; C.target = nil; C._targetReady = false; C.ANTI_DROWN_ENABLED = false; if C.ANTI_DROWN_TASK then task.cancel(C.ANTI_DROWN_TASK) end; pcall(C.clearAllLockUI) end })
+GHub.RegisterModule("莱克星顿与康科德", { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, AntiTab = AntiTab, Options = Library.Options, Unload = function() C.running = false; C.state = "IDLE"; C.target = nil; C._targetReady = false; C.ANTI_DROWN_ENABLED = false; pcall(C.clearAllLockUI) end })
 end
 if GHub and GHub.RegisterTab then
 GHub.RegisterTab("枪械", AimTab)
 GHub.RegisterTab("杂项", MiscTab)
 GHub.RegisterTab("反", AntiTab)
 end
-return { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, AntiTab = AntiTab, Options = Library.Options, Unload = function() C.running = false; C.state = "IDLE"; C.target = nil; C._targetReady = false; C.ANTI_DROWN_ENABLED = false; if C.ANTI_DROWN_TASK then task.cancel(C.ANTI_DROWN_TASK) end; pcall(C.clearAllLockUI) end }
+return { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, AntiTab = AntiTab, Options = Library.Options, Unload = function() C.running = false; C.state = "IDLE"; C.target = nil; C._targetReady = false; C.ANTI_DROWN_ENABLED = false; pcall(C.clearAllLockUI) end }
 end
