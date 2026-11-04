@@ -309,7 +309,7 @@ end,
 C.aL:AddToggle("swWall", {
 Text = "穿墙模式",
 Default = false,
-Tooltip = "开启后跳过射线检测并把射击发包起点改到目标点后面实现穿墙",
+Tooltip = "开启后跳过射线检测并把目标发包终点推到更远位置实现穿墙",
 Callback = function(v)
 C.WALLHACK_ENABLED = v
 C._losCache = setmetatable({}, { __mode = "k" })
@@ -1997,13 +1997,14 @@ local tH = getTargetHitPart(t) or getAimPart(t)
 if not mH or not tH then C._lastFail = "F5无瞄准部件"; return false end
 local origin = getShootOrigin(C.lp.Character)
 if not origin then origin = mH.Position end
--- 穿墙模式：把射击发包起点推到目标点后面，绕过服务器端遮挡检测
+-- 穿墙模式：不动射击起点，把目标发包终点沿射击方向推到更远位置，绕过服务器端遮挡检测
+local wallhackEndPos = tH.Position
 if C.WALLHACK_ENABLED then
 local toTarget = tH.Position - origin
 local pushBack = math.min(toTarget.Magnitude * 1.5, 50)
-origin = tH.Position + toTarget.Unit * pushBack
+wallhackEndPos = tH.Position + toTarget.Unit * pushBack
 end
-local shootDir = tH.Position - origin
+local shootDir = wallhackEndPos - origin
 if shootDir.Magnitude < 0.001 then C._lastFail = "F6方向无效"; return false end
 shootDir = shootDir.Unit
 local realDir = shootDir
@@ -2052,7 +2053,7 @@ Gun = gun,
 Vector = realDir,
 epoch = stamp,
 bulletOrigin = origin,
-bulletEnd = tH.Position,
+bulletEnd = wallhackEndPos,
 rngSeed = nextSeed(),
 otherCharacter = t,
 hitLimb = limbName,
@@ -2066,7 +2067,7 @@ if C.USE_BYTENET_SHOOT and C._mkShootBuffer then
 pcall(function()
 local ev = C.Replicated:FindFirstChild(C.BYTE_EVT_NAME or "ByteNetReliable")
 if ev then
-ev:FireServer(C._mkShootBuffer(origin, tH.Position), { gun })
+ev:FireServer(C._mkShootBuffer(origin, wallhackEndPos), { gun })
 C._byteShots = (C._byteShots or 0) + 1
 end
 end)
