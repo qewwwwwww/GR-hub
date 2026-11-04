@@ -93,7 +93,7 @@ local SCAN_REFRESH = 0
  C.WALLHACK_ENABLED = false
  C.TRACER_COOLDOWN = 0.08
  C.PERF_FRAME_BUDGET = 0.015
- C.RELOAD_TIME = 7.0
+ C.RELOAD_TIME = 7
  C.PACKET_DELAY = 0.1
  C.MAX_DIST = 300
  C.SLIDER_MIN = 50
@@ -330,12 +330,14 @@ Callback = function(v) C.LOCK_CONFIRM_TIME = v end,
 })
 C.aR:AddSlider("sldCool", {
 Text = "换弹冷却",
-Default = C.RELOAD_TIME,
+Default = 7,
 Min = C.SLIDER_MIN_COOLDOWN,
 Max = C.SLIDER_MAX_COOLDOWN,
-Rounding = 1,
+Rounding = 0,
 Suffix = " s",
-Callback = function(v) C.RELOAD_TIME = v end,
+Callback = function(v)
+C.RELOAD_TIME = math.floor(tonumber(v) + 0.5)
+end,
 })
 C.aR:AddSlider("sldDist", {
 Text = "射击距离",
@@ -449,7 +451,8 @@ local PART_NAMES = {
 "LeftUpperArm", "LeftLowerArm", "RightUpperArm", "RightLowerArm",
 "LeftUpperLeg", "LeftLowerLeg", "RightUpperLeg", "RightLowerLeg",
 }
-local S = { track = nil, anim = nil, thread = nil, saved = setmetatable({}, { __mode = "k" }), diedConn = nil, charConn = nil }
+local S = { track = nil, anim = nil, thread = nil, saved = setmetatable({}, { __mode = "k" }), muted = setmetatable({}, { __mode = "k" }), animator = nil, freezeAt = FREEZE_TIME, applying = false, lastGuard = 0, guardConn = nil, hbConn = nil, diedConn = nil, charConn = nil }
+local suppress, restoreMuted
 C.INVIS_ENABLED = false
 local function restoreCollide()
 for part, v in pairs(S.saved) do
@@ -462,9 +465,46 @@ end
 local function stopTrack()
 if S.thread then pcall(task.cancel, S.thread) end
 S.thread = nil
+if S.guardConn then pcall(function() S.guardConn:Disconnect() end) end
+if S.hbConn then pcall(function() S.hbConn:Disconnect() end) end
+S.guardConn = nil
+S.hbConn = nil
+if restoreMuted then pcall(restoreMuted) end
+S.animator = nil
+S.applying = false
 if S.track then pcall(function() S.track:Stop() end) end
 S.track = nil
 S.anim = nil
+end
+restoreMuted = function()
+for t, w in pairs(S.muted) do
+pcall(function() t:AdjustWeight(w, 0) end)
+end
+table.clear(S.muted)
+end
+suppress = function(animator)
+if not animator or not S.track then return end
+local tr = S.track
+pcall(function()
+for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
+if t ~= tr then
+if S.muted[t] == nil then
+local okw, w = pcall(function() return t.WeightTarget end)
+S.muted[t] = (okw and type(w) == "number" and w > 0) and w or 1
+end
+pcall(function() t:AdjustWeight(0, 0) end)
+end
+end
+end)
+if not tr.Length or tr.Length <= 0 or S.applying then return end
+S.applying = true
+pcall(function()
+if not tr.IsPlaying then tr:Play(0, 1) end
+tr:AdjustWeight(1, 0)
+tr.TimePosition = math.min(S.freezeAt, tr.Length)
+tr:AdjustSpeed(0)
+end)
+S.applying = false
 end
 local function noCollide(char)
 restoreCollide()
@@ -494,10 +534,27 @@ local ok, tr = pcall(function() return animator:LoadAnimation(anim) end)
 if not ok or not tr then return false end
 S.track = tr
 S.anim = anim
+S.animator = animator
+S.freezeAt = FREEZE_TIME
+S.lastGuard = 0
 pcall(function()
 tr.Priority = Enum.AnimationPriority.Action
 tr.Looped = true
-tr:Play(0.1)
+tr:Play(0, 1)
+end)
+suppress(animator)
+if S.guardConn then pcall(function() S.guardConn:Disconnect() end) end
+S.guardConn = animator.AnimationPlayed:Connect(function(played)
+if played == tr or S.applying or not C.INVIS_ENABLED or S.track ~= tr then return end
+suppress(animator)
+end)
+if S.hbConn then pcall(function() S.hbConn:Disconnect() end) end
+S.hbConn = C.RunService.Heartbeat:Connect(function()
+if not C.INVIS_ENABLED or S.track ~= tr then return end
+local n = os.clock()
+if n - S.lastGuard < 0.1 then return end
+S.lastGuard = n
+suppress(animator)
 end)
 S.thread = task.spawn(function()
 local waited = 0
@@ -508,14 +565,17 @@ end
 if S.track ~= tr then return end
 local L = tr.Length or 0
 local t = L > 0 and math.min(FREEZE_TIME, L) or FREEZE_TIME
+S.freezeAt = t
 pcall(function()
 tr.TimePosition = t
 tr:AdjustSpeed(0)
+tr:AdjustWeight(1, 0)
 end)
+suppress(animator)
 end)
 if S.diedConn then pcall(function() S.diedConn:Disconnect() end) end
 S.diedConn = hum.Died:Connect(function()
-stopTrack()
+if C.INVIS_ENABLED and S.animator then suppress(S.animator) end
 end)
 return true
 end
@@ -532,6 +592,7 @@ S.diedConn = nil
 end
 C.invisFullDisable = function()
 C.INVIS_ENABLED = false
+if type(C._losCache) == "table" then table.clear(C._losCache) end
 disable()
 if S.charConn then pcall(function() S.charConn:Disconnect() end) end
 S.charConn = nil
@@ -548,9 +609,10 @@ end)
 playerL:AddToggle("swInvisible", {
 Text = "隐身",
 Default = false,
-Tooltip = "播放 NPC 沉地动作并冻结在 55 秒，关闭自身部件碰撞使模型沉入地形",
+Tooltip = "Action 最高级 + 独占权重：沉地动作冻结 55 秒，压制后来动画不被打断",
 Callback = function(v)
 C.INVIS_ENABLED = v
+if type(C._losCache) == "table" then table.clear(C._losCache) end
 if v then
 task.spawn(function()
 local char = C.lp.Character
@@ -647,6 +709,7 @@ if O.swInvisible then O.swInvisible:SetValue(false) end
 if O.ddPart then O.ddPart:SetValue(C.PART_LABEL["Head"]) end
 if O.sldLock then O.sldLock:SetValue(0.35) end
 if O.sldCool then O.sldCool:SetValue(7) end
+C.RELOAD_TIME = 7
 if O.sldDist then O.sldDist:SetValue(300) end
 if O.sldSpeed then O.sldSpeed:SetValue(5) end
 if O.sldPrec then O.sldPrec:SetValue(4) end
@@ -707,7 +770,7 @@ if ratio < 0 then ratio = 0 end
 if ratio > 1 then ratio = 1 end
 C.barFill.Size = UDim2.new(ratio, 0, 1, 0)
 C.barFill.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
-C.barText.Text = string.format("换弹冷却 %.1fs", remain)
+C.barText.Text = string.format("换弹冷却 %ds", math.ceil(remain))
 else
 C.barFill.Size = UDim2.new(1, 0, 1, 0)
 C.barFill.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
@@ -1013,6 +1076,14 @@ or c:FindFirstChildWhichIsA("BasePart")
 if p then C._aimPart[c] = p end
 return p
 end
+local function getSelfOriginPart(char)
+if not char then return nil end
+if C.INVIS_ENABLED then
+local r = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+if r and r:IsA("BasePart") then return r end
+end
+return getAimPart(char)
+end
  C.tracerFolder = Instance.new("Folder")
 C.tracerFolder.Name = "AimTracers"
 C.tracerFolder.Parent = C.Workspace
@@ -1242,7 +1313,7 @@ end
 end
 updateLockUISize = function()
 local myChar = C.lp.Character
-local mh = myChar and getAimPart(myChar)
+local mh = getSelfOriginPart(myChar)
 if not mh then return end
 local myPos = mh.Position
 for t, ui in pairs(C.lockUI) do
@@ -1754,6 +1825,10 @@ onMyRespawn(c)
 hookMuzzleEvents(c)
 end)
 local function getShootOrigin(myChar)
+if C.INVIS_ENABLED and myChar then
+local r = myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart
+if r and r:IsA("BasePart") then return r.Position, "ROOT" end
+end
 local ok1, gp = pcall(getGameBodyHead)
 if ok1 and typeof(gp) == "Vector3" then return gp, "HEAD" end
 local h = myChar and getAimPart(myChar)
@@ -2050,7 +2125,7 @@ local function collectCandidates()
 table.clear(C._candBuf)
 local myChar = C.lp.Character
 if not myChar then return 0 end
-local mh = getAimPart(myChar)
+local mh = getSelfOriginPart(myChar)
 if not mh then return 0 end
 local fromPos = mh.Position
 local n = 0
