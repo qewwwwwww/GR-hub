@@ -91,6 +91,8 @@ local SCAN_REFRESH = 0
  C.LOCK_UI_MAX = 70
  C.RAY_ENABLED = true
  C.WALLHACK_ENABLED = false
+ C.TRACER_COOLDOWN = 0.08
+ C.PERF_FRAME_BUDGET = 0.015
  C.RELOAD_TIME = 7.0
  C.PACKET_DELAY = 0.1
  C.MAX_DIST = 300
@@ -269,6 +271,7 @@ C.setLockState = function() end
 updateLockUISize = function() end
 local AimTab = Window:AddTab("枪械", "crosshair")
 local MiscTab = Window:AddTab("杂项", "settings")
+local AntiTab = Window:AddTab("反", "skull")
  C.aL = AimTab:AddLeftGroupbox("ragebot", "power")
  C.aR = AimTab:AddRightGroupbox("射击参数", "crosshair")
 C.aL:AddToggle("swFire", {
@@ -431,7 +434,49 @@ end,
  C.nowStamp = nil
  C.mL = MiscTab:AddLeftGroupbox("状态", "activity")
  C.mR = MiscTab:AddRightGroupbox("操作", "wrench")
+-- ============================================
+-- "反" Tab - 反落水功能集
+-- ============================================
+local antiL = AntiTab:AddLeftGroupbox("反落水", "skull")
+local antiR = AntiTab:AddRightGroupbox("工具", "wrench")
+C.ANTI_DROWN_ENABLED = false
+C.ANTI_DROWN_TASK = nil
  C.diagLabel = C.mL:AddLabel("等待数据...")
+-- 反落水开关
+antiL:AddToggle("swAntiDrown", {
+    Text = "反落水",
+    Default = false,
+    Tooltip = "拦截并发送56号包防止落水踢出",
+    Callback = function(v)
+        C.ANTI_DROWN_ENABLED = v
+        if v and not C.ANTI_DROWN_TASK then
+            C.ANTI_DROWN_TASK = task.spawn(function()
+                while C.ANTI_DROWN_ENABLED do
+                    task.wait(1)
+                    pcall(function()
+                        local Event = C.Replicated:FindFirstChild("ByteNetReliable")
+                        if Event then
+                            Event:FireServer(
+                                (function(bytes)
+                                    local b = buffer.create(#bytes)
+                                    for i = 1, #bytes do
+                                        buffer.writeu8(b, i - 1, bytes[i])
+                                    end
+                                    return b
+                                end)({ 56, 1, 7, 0, 68, 114, 111, 119, 110, 101, 100 }),
+                                nil
+                            )
+                        end
+                    end)
+                end
+                C.ANTI_DROWN_TASK = nil
+            end)
+        elseif not v and C.ANTI_DROWN_TASK then
+            task.cancel(C.ANTI_DROWN_TASK)
+            C.ANTI_DROWN_TASK = nil
+        end
+    end,
+})
 C.rR:AddToggle("swByte", {
 Text = "ByteNet 射击注册",
 Default = false,
@@ -459,6 +504,7 @@ if O.swPierce then O.swPierce:SetValue(true) end
 if O.swTracer then O.swTracer:SetValue(true) end
 if O.swEco then O.swEco:SetValue(false) end
 if O.swWall then O.swWall:SetValue(false) end
+if O.swAntiDrown then O.swAntiDrown:SetValue(false) end
 if O.ddPart then O.ddPart:SetValue(C.PART_LABEL["Head"]) end
 if O.sldLock then O.sldLock:SetValue(0.35) end
 if O.sldCool then O.sldCool:SetValue(7) end
@@ -857,6 +903,9 @@ end
  C.TRACER_FADE_STEP = (C.TRACER_LIFETIME - C.TRACER_HOLD) / 4
 local function drawTracer(fromPos, toPos)
 if not C.FX_ENABLED then return end
+local now = os.clock()
+if now - (C._lastTracerTime or 0) < C.TRACER_COOLDOWN then return end
+C._lastTracerTime = now
 if (toPos - fromPos).Magnitude < 0.5 then return end
 local a0 = Instance.new("Attachment")
 a0.WorldCFrame = CFrame.new(fromPos)
@@ -1218,7 +1267,24 @@ C._filterDirty = false
 local friendly, cursorFiltered = {}, {}
 if C.PlayerUtility and type(C.PlayerUtility.GetFriendlyCharactersOfPlayer) == "function" then
 local ok2, r = pcall(function() return C.PlayerUtility:GetFriendlyCharactersOfPlayer(C.lp, true) end)
-if ok2 and type(r) == "table" then friendly = r end
+if ok2 and type(r) == "table" then
+-- [性能优化+建筑修复] 过滤掉非角色对象(建筑/道具等)，防止它们被加入射线排除列表
+-- 原代码直接赋值 friendly = r，导致 GetFriendlyCharactersOfPlayer 返回的建筑模型
+-- 被加入射线排除列表，射线直接忽略建筑 —— 这会导致穿墙射击逻辑异常
+local filtered = {}
+local n = 0
+for _, v in ipairs(r) do
+if typeof(v) == "Instance" then
+local m = v:IsA("Model") and v or v:FindFirstAncestorWhichIsA("Model")
+-- 只保留有 Humanoid 的角色模型，过滤掉建筑和杂物
+if m and m:FindFirstChildWhichIsA("Humanoid") then
+n = n + 1
+filtered[n] = v
+end
+end
+end
+friendly = filtered
+end
 end
 if C.PlayerUtility and type(C.PlayerUtility.GetFriendlyPlayersOfPlayer) == "function" then
 local ok2, r = pcall(function() return C.PlayerUtility:GetFriendlyPlayersOfPlayer(C.lp, true) end)
@@ -1259,6 +1325,21 @@ combined = {}
 for _, v in ipairs(friendly) do combined[#combined + 1] = v end
 for _, v in ipairs(cursorFiltered) do combined[#combined + 1] = v end
 end
+-- [建筑修复] 再次过滤 combined，确保建筑模型不会进入射线排除列表
+-- 过滤掉名称包含 building/barrier/structure 的建筑对象
+local cleanCombined = {}
+local nc = 0
+for _, v in ipairs(combined) do
+if typeof(v) == "Instance" then
+local nm = string.lower(v.Name or "")
+local isBuilding = string.find(nm, "building") or string.find(nm, "barrier") or string.find(nm, "structure")
+if not isBuilding then
+nc = nc + 1
+cleanCombined[nc] = v
+end
+end
+end
+combined = cleanCombined
 local list = {}
 local n = 0
 if C.lp.Character then n = n + 1; list[n] = C.lp.Character end
@@ -2201,6 +2282,14 @@ C.lp.CharacterRemoving:Connect(function()
 resetOnDeath()
 end)
 C.RunService.Heartbeat:Connect(function(dt)
+-- [性能优化] 帧预算限制：单帧耗时超过阈值则跳过非关键操作，防止卡顿
+local nowHb = os.clock()
+if nowHb - (C._lastHbTime or 0) < C.PERF_FRAME_BUDGET then
+-- 帧间隔过短，跳过本帧的非关键逻辑（扫描/射线检测），仅保留基础更新
+updateCooldownBar()
+return
+end
+C._lastHbTime = nowHb
 -- 死亡/未复活：彻底休眠。0.5 秒才动一次，
 -- 不再每帧跑重置、扫根、更新 UI —— 死亡时游戏本身已在重负载，这是主要卡顿源
 do
@@ -2266,7 +2355,12 @@ showLockUI(t)
 end
 end
 if C.target then
-if (now - C._lastLosTime) >= C._LOS_INTERVAL then
+-- [性能优化] 已稳定锁定目标时降低LOS检测频率，减少射线调用
+local losInterval = C._LOS_INTERVAL
+if C._targetReady then
+losInterval = math.max(losInterval, 0.03)
+end
+if (now - C._lastLosTime) >= losInterval then
 C._lastLosTime = now
 C._targetReady = clearShotShooterStyle(myChar, C.target)
 C.setLockState(C.target, C._targetReady)
@@ -2345,11 +2439,12 @@ end
 end)
 Library:Notify("GR 功能已加载", 3)
 if GHub and GHub.RegisterModule then
-GHub.RegisterModule("莱克星顿与康科德", { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, Options = Library.Options, Unload = function() C.running = false; C.state = "IDLE"; C.target = nil; C._targetReady = false; pcall(C.clearAllLockUI) end })
+GHub.RegisterModule("莱克星顿与康科德", { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, AntiTab = AntiTab, Options = Library.Options, Unload = function() C.running = false; C.state = "IDLE"; C.target = nil; C._targetReady = false; C.ANTI_DROWN_ENABLED = false; if C.ANTI_DROWN_TASK then task.cancel(C.ANTI_DROWN_TASK) end; pcall(C.clearAllLockUI) end })
 end
 if GHub and GHub.RegisterTab then
 GHub.RegisterTab("枪械", AimTab)
 GHub.RegisterTab("杂项", MiscTab)
+GHub.RegisterTab("反", AntiTab)
 end
-return { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, Options = Library.Options, Unload = function() C.running = false; C.state = "IDLE"; C.target = nil; C._targetReady = false; pcall(C.clearAllLockUI) end }
+return { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, AntiTab = AntiTab, Options = Library.Options, Unload = function() C.running = false; C.state = "IDLE"; C.target = nil; C._targetReady = false; C.ANTI_DROWN_ENABLED = false; if C.ANTI_DROWN_TASK then task.cancel(C.ANTI_DROWN_TASK) end; pcall(C.clearAllLockUI) end }
 end
