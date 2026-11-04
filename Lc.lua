@@ -271,7 +271,7 @@ C.setLockState = function() end
 updateLockUISize = function() end
 local AimTab = Window:AddTab("枪械", "crosshair")
 local MiscTab = Window:AddTab("杂项", "settings")
-local AntiTab = Window:AddTab("反", "skull")
+local AntiTab = Window:AddTab("本地", "skull")
  C.aL = AimTab:AddLeftGroupbox("ragebot", "power")
  C.aR = AimTab:AddRightGroupbox("射击参数", "crosshair")
 C.aL:AddToggle("swFire", {
@@ -435,9 +435,9 @@ end,
  C.mL = MiscTab:AddLeftGroupbox("状态", "activity")
  C.mR = MiscTab:AddRightGroupbox("操作", "wrench")
 -- ============================================
--- "反" Tab - 反落水功能集
+-- "本地" Tab - 反功能集
 -- ============================================
-local antiL = AntiTab:AddLeftGroupbox("反落水", "skull")
+local antiL = AntiTab:AddLeftGroupbox("反", "skull")
 local antiR = AntiTab:AddRightGroupbox("工具", "wrench")
 C.ANTI_DROWN_ENABLED = false
 C.ANTI_DROWN_HOOKED = false
