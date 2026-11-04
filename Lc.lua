@@ -90,6 +90,7 @@ local SCAN_REFRESH = 0
  C.LOCK_UI_MIN = 16
  C.LOCK_UI_MAX = 70
  C.RAY_ENABLED = true
+ C.WALLHACK_ENABLED = false
  C.RELOAD_TIME = 7.0
  C.PACKET_DELAY = 0.1
  C.MAX_DIST = 300
@@ -305,6 +306,16 @@ C.ATTACK_PLAYERS = v
 C.requestScan()
 end,
 })
+C.aL:AddToggle("swWall", {
+Text = "穿墙模式",
+Default = false,
+Tooltip = "开启后跳过射线检测并把射击发包起点改到目标点后面实现穿墙",
+Callback = function(v)
+C.WALLHACK_ENABLED = v
+C._losCache = setmetatable({}, { __mode = "k" })
+C.requestScan()
+end,
+})
 C.aR:AddSlider("sldLock", {
 Text = "锁定时间",
 Default = C.LOCK_CONFIRM_TIME,
@@ -447,6 +458,7 @@ if O.swFallback then O.swFallback:SetValue(false) end
 if O.swPierce then O.swPierce:SetValue(true) end
 if O.swTracer then O.swTracer:SetValue(true) end
 if O.swEco then O.swEco:SetValue(false) end
+if O.swWall then O.swWall:SetValue(false) end
 if O.ddPart then O.ddPart:SetValue(C.PART_LABEL["Head"]) end
 if O.sldLock then O.sldLock:SetValue(0.35) end
 if O.sldCool then O.sldCool:SetValue(7) end
@@ -1590,7 +1602,7 @@ return first, false
 end
 local function clearShotShooterStyle(myChar, targetModel, force)
 if not myChar or not targetModel then return false end
-if not C.RAY_ENABLED then
+if not C.RAY_ENABLED or C.WALLHACK_ENABLED then
 local ap = getAimPart(targetModel)
 if ap then C._aimPick[targetModel] = ap end
 C._losSource = "OFF"
@@ -1985,6 +1997,12 @@ local tH = getTargetHitPart(t) or getAimPart(t)
 if not mH or not tH then C._lastFail = "F5无瞄准部件"; return false end
 local origin = getShootOrigin(C.lp.Character)
 if not origin then origin = mH.Position end
+-- 穿墙模式：把射击发包起点推到目标点后面，绕过服务器端遮挡检测
+if C.WALLHACK_ENABLED then
+local toTarget = tH.Position - origin
+local pushBack = math.min(toTarget.Magnitude * 1.5, 50)
+origin = tH.Position + toTarget.Unit * pushBack
+end
 local shootDir = tH.Position - origin
 if shootDir.Magnitude < 0.001 then C._lastFail = "F6方向无效"; return false end
 shootDir = shootDir.Unit
@@ -2305,12 +2323,13 @@ if type(cf) == "boolean" then fireStr = tostring(cf) end
 end
 local tg = C.target and (C.target.Name or "?") or "无"
 C.diagLabel:SetText(string.format(
-"状态:%s | 启动:%s | 死亡:%s\n目标:%s | 视线:%s\n枪:%s | 弹:%s | 可开火:%s\nPR:%s | 开火:%d | 包成:%d 败:%d\n建筑遮挡:%s | 守门:%d\n遮挡物:%s\n候选池:%d (NPC:%d)\n最后:%s",
+"状态:%s | 启动:%s | 死亡:%s\n目标:%s | 视线:%s | 穿墙:%s\n枪:%s | 弹:%s | 可开火:%s\nPR:%s | 开火:%d | 包成:%d 败:%d\n建筑遮挡:%s | 守门:%d\n遮挡物:%s\n候选池:%d (NPC:%d)\n最后:%s",
 tostring(C.state),
 C.running and "开" or "关",
 C.isDead and "是" or "否",
 tg,
 C._targetReady and "通" or "断",
+C.WALLHACK_ENABLED and "开" or "关",
 C._lastGun, ammoStr, fireStr,
 PR_OK and "已连接" or "缺失",
 C._fireCalls, C._packetsSent, C._packetsFail,
