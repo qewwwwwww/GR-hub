@@ -270,8 +270,8 @@ stopLockSpin = function() end
 C.setLockState = function() end
 updateLockUISize = function() end
 local AimTab = Window:AddTab("枪械", "crosshair")
+local AntiTab = Window:AddTab("本地", "monitor")
 local MiscTab = Window:AddTab("杂项", "settings")
-local AntiTab = Window:AddTab("本地", "skull")
  C.aL = AimTab:AddLeftGroupbox("ragebot", "power")
  C.aR = AimTab:AddRightGroupbox("射击参数", "crosshair")
 C.aL:AddToggle("swFire", {
@@ -439,6 +439,133 @@ end,
 -- ============================================
 local antiL = AntiTab:AddLeftGroupbox("反", "skull")
 local antiR = AntiTab:AddRightGroupbox("工具", "wrench")
+local playerL = AntiTab:AddLeftGroupbox("玩家", "user")
+local function buildInvisibility()
+local ANIM_ID = "rbxassetid://98447078830933"
+local FREEZE_TIME = 55
+local PART_NAMES = {
+"Left Arm", "Right Arm", "Left Leg", "Right Leg",
+"Torso", "UpperTorso", "LowerTorso",
+"LeftUpperArm", "LeftLowerArm", "RightUpperArm", "RightLowerArm",
+"LeftUpperLeg", "LeftLowerLeg", "RightUpperLeg", "RightLowerLeg",
+}
+local S = { track = nil, anim = nil, thread = nil, saved = setmetatable({}, { __mode = "k" }), diedConn = nil, charConn = nil }
+C.INVIS_ENABLED = false
+local function restoreCollide()
+for part, v in pairs(S.saved) do
+pcall(function()
+part.CanCollide = v[1]
+part.CanTouch = v[2]
+end)
+end
+end
+local function stopTrack()
+if S.thread then pcall(task.cancel, S.thread) end
+S.thread = nil
+if S.track then pcall(function() S.track:Stop() end) end
+S.track = nil
+S.anim = nil
+end
+local function noCollide(char)
+restoreCollide()
+for _, n in ipairs(PART_NAMES) do
+local p = char:FindFirstChild(n)
+if p and p:IsA("BasePart") then
+if not S.saved[p] then S.saved[p] = { p.CanCollide, p.CanTouch } end
+p.CanCollide = false
+p.CanTouch = false
+end
+end
+local head = char:FindFirstChild("Head")
+if head and head:IsA("BasePart") then
+if not S.saved[head] then S.saved[head] = { head.CanCollide, head.CanTouch } end
+head.CanTouch = false
+end
+end
+local function startTrack(char)
+stopTrack()
+local hum = char:FindFirstChildOfClass("Humanoid")
+if not hum then return false end
+local animator = hum:FindFirstChildOfClass("Animator")
+if not animator then return false end
+local anim = Instance.new("Animation")
+anim.AnimationId = ANIM_ID
+local ok, tr = pcall(function() return animator:LoadAnimation(anim) end)
+if not ok or not tr then return false end
+S.track = tr
+S.anim = anim
+pcall(function()
+tr.Priority = Enum.AnimationPriority.Action
+tr.Looped = true
+tr:Play(0.1)
+end)
+S.thread = task.spawn(function()
+local waited = 0
+while S.track == tr and waited < 5 do
+if tr.Length and tr.Length > 0 then break end
+waited = waited + task.wait(0.05)
+end
+if S.track ~= tr then return end
+local L = tr.Length or 0
+local t = L > 0 and math.min(FREEZE_TIME, L) or FREEZE_TIME
+pcall(function()
+tr.TimePosition = t
+tr:AdjustSpeed(0)
+end)
+end)
+if S.diedConn then pcall(function() S.diedConn:Disconnect() end) end
+S.diedConn = hum.Died:Connect(function()
+stopTrack()
+end)
+return true
+end
+local function apply(char)
+if not char then return end
+noCollide(char)
+startTrack(char)
+end
+local function disable()
+stopTrack()
+restoreCollide()
+if S.diedConn then pcall(function() S.diedConn:Disconnect() end) end
+S.diedConn = nil
+end
+C.invisFullDisable = function()
+C.INVIS_ENABLED = false
+disable()
+if S.charConn then pcall(function() S.charConn:Disconnect() end) end
+S.charConn = nil
+S.saved = setmetatable({}, { __mode = "k" })
+end
+S.charConn = C.lp.CharacterAdded:Connect(function(c)
+if not C.INVIS_ENABLED then return end
+task.spawn(function()
+local hum = c:WaitForChild("Humanoid", 5)
+if hum then hum:WaitForChild("Animator", 5) end
+if C.INVIS_ENABLED and S.charConn then apply(c) end
+end)
+end)
+playerL:AddToggle("swInvisible", {
+Text = "隐身",
+Default = false,
+Tooltip = "播放 NPC 沉地动作并冻结在 55 秒，关闭自身部件碰撞使模型沉入地形",
+Callback = function(v)
+C.INVIS_ENABLED = v
+if v then
+task.spawn(function()
+local char = C.lp.Character
+if not char then return end
+local hum = char:WaitForChild("Humanoid", 5)
+if hum then hum:WaitForChild("Animator", 5) end
+if C.INVIS_ENABLED then apply(char) end
+end)
+else
+disable()
+end
+end,
+})
+end
+buildInvisibility()
 C.ANTI_DROWN_ENABLED = false
 C.ANTI_DROWN_HOOKED = false
 C.ANTI_DROWN_REMOTE = nil
@@ -516,6 +643,7 @@ if O.swTracer then O.swTracer:SetValue(true) end
 if O.swEco then O.swEco:SetValue(false) end
 if O.swWall then O.swWall:SetValue(false) end
 if O.swAntiDrown then O.swAntiDrown:SetValue(false) end
+if O.swInvisible then O.swInvisible:SetValue(false) end
 if O.ddPart then O.ddPart:SetValue(C.PART_LABEL["Head"]) end
 if O.sldLock then O.sldLock:SetValue(0.35) end
 if O.sldCool then O.sldCool:SetValue(7) end
@@ -2450,12 +2578,12 @@ end
 end)
 Library:Notify("GR 功能已加载", 3)
 if GHub and GHub.RegisterModule then
-GHub.RegisterModule("莱克星顿与康科德", { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, AntiTab = AntiTab, Options = Library.Options, Unload = function() C.running = false; C.state = "IDLE"; C.target = nil; C._targetReady = false; C.ANTI_DROWN_ENABLED = false; pcall(C.clearAllLockUI) end })
+GHub.RegisterModule("莱克星顿与康科德", { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, AntiTab = AntiTab, Options = Library.Options, Unload = function() C.running = false; C.state = "IDLE"; C.target = nil; C._targetReady = false; C.ANTI_DROWN_ENABLED = false; C.INVIS_ENABLED = false; if C.invisFullDisable then pcall(C.invisFullDisable) end; pcall(C.clearAllLockUI) end })
 end
 if GHub and GHub.RegisterTab then
 GHub.RegisterTab("枪械", AimTab)
+GHub.RegisterTab("本地", AntiTab)
 GHub.RegisterTab("杂项", MiscTab)
-GHub.RegisterTab("反", AntiTab)
 end
-return { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, AntiTab = AntiTab, Options = Library.Options, Unload = function() C.running = false; C.state = "IDLE"; C.target = nil; C._targetReady = false; C.ANTI_DROWN_ENABLED = false; pcall(C.clearAllLockUI) end }
+return { Name = "莱克星顿与康科德", AimTab = AimTab, MiscTab = MiscTab, AntiTab = AntiTab, Options = Library.Options, Unload = function() C.running = false; C.state = "IDLE"; C.target = nil; C._targetReady = false; C.ANTI_DROWN_ENABLED = false; C.INVIS_ENABLED = false; if C.invisFullDisable then pcall(C.invisFullDisable) end; pcall(C.clearAllLockUI) end }
 end
