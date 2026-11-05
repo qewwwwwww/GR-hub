@@ -451,19 +451,17 @@ local PART_NAMES = {
 "LeftUpperArm", "LeftLowerArm", "RightUpperArm", "RightLowerArm",
 "LeftUpperLeg", "LeftLowerLeg", "RightUpperLeg", "RightLowerLeg",
 }
-local S = { track = nil, anim = nil, thread = nil, saved = setmetatable({}, { __mode = "k" }), muted = setmetatable({}, { __mode = "k" }), anchorSaved = setmetatable({}, { __mode = "k" }), hrp = nil, animator = nil, freezeAt = FREEZE_TIME, applying = false, lastGuard = 0, guardConn = nil, hbConn = nil, diedConn = nil, charConn = nil }
+local S = { track = nil, anim = nil, thread = nil, saved = setmetatable({}, { __mode = "k" }), muted = setmetatable({}, { __mode = "k" }), holdY = nil, hrp = nil, animator = nil, freezeAt = FREEZE_TIME, applying = false, lastGuard = 0, guardConn = nil, hbConn = nil, diedConn = nil, charConn = nil }
 local suppress, restoreMuted
 C.INVIS_ENABLED = false
 C.INVIS_LIFT = 2.6
 C.INVIS_LIFT_EXTRA = 0
-local function restoreAnchor()
-for part, v in pairs(S.anchorSaved) do
-pcall(function() part.Anchored = v end)
-end
+local function releaseHold()
+S.holdY = nil
 S.hrp = nil
 end
 local function restoreCollide()
-restoreAnchor()
+releaseHold()
 for part, v in pairs(S.saved) do
 pcall(function()
 part.CanCollide = v[1]
@@ -525,9 +523,8 @@ local dy = h.Position.Y - r.Position.Y
 if dy > 0.6 and dy < 8 then C.INVIS_LIFT = dy + (C.INVIS_LIFT_EXTRA or 0) end
 end
 if r and r:IsA("BasePart") then
-if S.anchorSaved[r] == nil then S.anchorSaved[r] = r.Anchored end
-r.Anchored = true
 S.hrp = r
+S.holdY = r.Position.Y
 end
 end
 for _, n in ipairs(PART_NAMES) do
@@ -573,13 +570,26 @@ end)
 if S.hbConn then pcall(function() S.hbConn:Disconnect() end) end
 S.hbConn = C.RunService.Heartbeat:Connect(function()
 if not C.INVIS_ENABLED or S.track ~= tr then return end
-local n = os.clock()
-if n - S.lastGuard < 0.1 then return end
-S.lastGuard = n
-if S.hrp and S.hrp.Parent then
-pcall(function() if not S.hrp.Anchored then S.hrp.Anchored = true end end)
+if S.hrp and S.hrp.Parent and S.holdY then
+pcall(function()
+local cf = S.hrp.CFrame
+local p = cf.Position
+if math.abs(p.Y - S.holdY) > 0.02 then
+S.hrp.CFrame = CFrame.new(p.X, S.holdY, p.Z) * (cf - cf.Position)
 end
+end)
+pcall(function()
+local vel = S.hrp.AssemblyLinearVelocity
+if vel and vel.Y ~= 0 then
+S.hrp.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
+end
+end)
+end
+local n = os.clock()
+if n - S.lastGuard >= 0.1 then
+S.lastGuard = n
 suppress(animator)
+end
 end)
 S.thread = task.spawn(function()
 local waited = 0
@@ -601,7 +611,7 @@ end)
 if S.diedConn then pcall(function() S.diedConn:Disconnect() end) end
 S.diedConn = hum.Died:Connect(function()
 if C.INVIS_ENABLED and S.animator then suppress(S.animator) end
-restoreAnchor()
+releaseHold()
 end)
 return true
 end
@@ -623,7 +633,8 @@ disable()
 if S.charConn then pcall(function() S.charConn:Disconnect() end) end
 S.charConn = nil
 S.saved = setmetatable({}, { __mode = "k" })
-S.anchorSaved = setmetatable({}, { __mode = "k" })
+S.holdY = nil
+S.hrp = nil
 end
 S.charConn = C.lp.CharacterAdded:Connect(function(c)
 if not C.INVIS_ENABLED then return end
@@ -636,7 +647,7 @@ end)
 playerL:AddToggle("swInvisible", {
 Text = "隐身",
 Default = false,
-Tooltip = "Action 最高级 + 独占权重：沉地动作冻结 55 秒，压制后来动画不被打断",
+Tooltip = "沉地动作冻结 55 秒并压制后来动画；只锁定高度防掉虚空，可自由水平移动",
 Callback = function(v)
 C.INVIS_ENABLED = v
 if type(C._losCache) == "table" then table.clear(C._losCache) end
