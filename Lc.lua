@@ -451,10 +451,19 @@ local PART_NAMES = {
 "LeftUpperArm", "LeftLowerArm", "RightUpperArm", "RightLowerArm",
 "LeftUpperLeg", "LeftLowerLeg", "RightUpperLeg", "RightLowerLeg",
 }
-local S = { track = nil, anim = nil, thread = nil, saved = setmetatable({}, { __mode = "k" }), muted = setmetatable({}, { __mode = "k" }), animator = nil, freezeAt = FREEZE_TIME, applying = false, lastGuard = 0, guardConn = nil, hbConn = nil, diedConn = nil, charConn = nil }
+local S = { track = nil, anim = nil, thread = nil, saved = setmetatable({}, { __mode = "k" }), muted = setmetatable({}, { __mode = "k" }), anchorSaved = setmetatable({}, { __mode = "k" }), hrp = nil, animator = nil, freezeAt = FREEZE_TIME, applying = false, lastGuard = 0, guardConn = nil, hbConn = nil, diedConn = nil, charConn = nil }
 local suppress, restoreMuted
 C.INVIS_ENABLED = false
+C.INVIS_LIFT = 2.6
+C.INVIS_LIFT_EXTRA = 0
+local function restoreAnchor()
+for part, v in pairs(S.anchorSaved) do
+pcall(function() part.Anchored = v end)
+end
+S.hrp = nil
+end
 local function restoreCollide()
+restoreAnchor()
 for part, v in pairs(S.saved) do
 pcall(function()
 part.CanCollide = v[1]
@@ -508,6 +517,19 @@ S.applying = false
 end
 local function noCollide(char)
 restoreCollide()
+do
+local h = char:FindFirstChild("Head")
+local r = char:FindFirstChild("HumanoidRootPart")
+if h and r and h:IsA("BasePart") and r:IsA("BasePart") then
+local dy = h.Position.Y - r.Position.Y
+if dy > 0.6 and dy < 8 then C.INVIS_LIFT = dy + (C.INVIS_LIFT_EXTRA or 0) end
+end
+if r and r:IsA("BasePart") then
+if S.anchorSaved[r] == nil then S.anchorSaved[r] = r.Anchored end
+r.Anchored = true
+S.hrp = r
+end
+end
 for _, n in ipairs(PART_NAMES) do
 local p = char:FindFirstChild(n)
 if p and p:IsA("BasePart") then
@@ -554,6 +576,9 @@ if not C.INVIS_ENABLED or S.track ~= tr then return end
 local n = os.clock()
 if n - S.lastGuard < 0.1 then return end
 S.lastGuard = n
+if S.hrp and S.hrp.Parent then
+pcall(function() if not S.hrp.Anchored then S.hrp.Anchored = true end end)
+end
 suppress(animator)
 end)
 S.thread = task.spawn(function()
@@ -576,6 +601,7 @@ end)
 if S.diedConn then pcall(function() S.diedConn:Disconnect() end) end
 S.diedConn = hum.Died:Connect(function()
 if C.INVIS_ENABLED and S.animator then suppress(S.animator) end
+restoreAnchor()
 end)
 return true
 end
@@ -597,6 +623,7 @@ disable()
 if S.charConn then pcall(function() S.charConn:Disconnect() end) end
 S.charConn = nil
 S.saved = setmetatable({}, { __mode = "k" })
+S.anchorSaved = setmetatable({}, { __mode = "k" })
 end
 S.charConn = C.lp.CharacterAdded:Connect(function(c)
 if not C.INVIS_ENABLED then return end
@@ -1076,13 +1103,16 @@ or c:FindFirstChildWhichIsA("BasePart")
 if p then C._aimPart[c] = p end
 return p
 end
-local function getSelfOriginPart(char)
+local function getSelfOriginPos(char)
 if not char then return nil end
 if C.INVIS_ENABLED then
 local r = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
-if r and r:IsA("BasePart") then return r end
+if r and r:IsA("BasePart") then
+return r.Position + Vector3.new(0, C.INVIS_LIFT or 2.6, 0)
 end
-return getAimPart(char)
+end
+local h = getAimPart(char)
+return h and h.Position or nil
 end
  C.tracerFolder = Instance.new("Folder")
 C.tracerFolder.Name = "AimTracers"
@@ -1313,9 +1343,8 @@ end
 end
 updateLockUISize = function()
 local myChar = C.lp.Character
-local mh = getSelfOriginPart(myChar)
-if not mh then return end
-local myPos = mh.Position
+local myPos = getSelfOriginPos(myChar)
+if not myPos then return end
 for t, ui in pairs(C.lockUI) do
 local ap = getAimPart(t)
 if ap then
@@ -1827,7 +1856,9 @@ end)
 local function getShootOrigin(myChar)
 if C.INVIS_ENABLED and myChar then
 local r = myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart
-if r and r:IsA("BasePart") then return r.Position, "ROOT" end
+if r and r:IsA("BasePart") then
+return r.Position + Vector3.new(0, C.INVIS_LIFT or 2.6, 0), "ROOT+"
+end
 end
 local ok1, gp = pcall(getGameBodyHead)
 if ok1 and typeof(gp) == "Vector3" then return gp, "HEAD" end
@@ -2125,9 +2156,8 @@ local function collectCandidates()
 table.clear(C._candBuf)
 local myChar = C.lp.Character
 if not myChar then return 0 end
-local mh = getSelfOriginPart(myChar)
-if not mh then return 0 end
-local fromPos = mh.Position
+local fromPos = getSelfOriginPos(myChar)
+if not fromPos then return 0 end
 local n = 0
 local function collect(c)
 if c == myChar or not c.Parent then return end
