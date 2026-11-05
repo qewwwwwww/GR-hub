@@ -451,17 +451,10 @@ local PART_NAMES = {
 "LeftUpperArm", "LeftLowerArm", "RightUpperArm", "RightLowerArm",
 "LeftUpperLeg", "LeftLowerLeg", "RightUpperLeg", "RightLowerLeg",
 }
-local S = { track = nil, anim = nil, thread = nil, saved = setmetatable({}, { __mode = "k" }), muted = setmetatable({}, { __mode = "k" }), holdY = nil, hrp = nil, animator = nil, freezeAt = FREEZE_TIME, applying = false, lastGuard = 0, guardConn = nil, hbConn = nil, diedConn = nil, charConn = nil }
+local S = { track = nil, anim = nil, thread = nil, saved = setmetatable({}, { __mode = "k" }), muted = setmetatable({}, { __mode = "k" }), animator = nil, freezeAt = FREEZE_TIME, applying = false, lastGuard = 0, guardConn = nil, hbConn = nil, diedConn = nil, charConn = nil }
 local suppress, restoreMuted
 C.INVIS_ENABLED = false
-C.INVIS_LIFT = 2.6
-C.INVIS_LIFT_EXTRA = 0
-local function releaseHold()
-S.holdY = nil
-S.hrp = nil
-end
 local function restoreCollide()
-releaseHold()
 for part, v in pairs(S.saved) do
 pcall(function()
 part.CanCollide = v[1]
@@ -515,18 +508,6 @@ S.applying = false
 end
 local function noCollide(char)
 restoreCollide()
-do
-local h = char:FindFirstChild("Head")
-local r = char:FindFirstChild("HumanoidRootPart")
-if h and r and h:IsA("BasePart") and r:IsA("BasePart") then
-local dy = h.Position.Y - r.Position.Y
-if dy > 0.6 and dy < 8 then C.INVIS_LIFT = dy + (C.INVIS_LIFT_EXTRA or 0) end
-end
-if r and r:IsA("BasePart") then
-S.hrp = r
-S.holdY = r.Position.Y
-end
-end
 for _, n in ipairs(PART_NAMES) do
 local p = char:FindFirstChild(n)
 if p and p:IsA("BasePart") then
@@ -570,21 +551,6 @@ end)
 if S.hbConn then pcall(function() S.hbConn:Disconnect() end) end
 S.hbConn = C.RunService.Heartbeat:Connect(function()
 if not C.INVIS_ENABLED or S.track ~= tr then return end
-if S.hrp and S.hrp.Parent and S.holdY then
-pcall(function()
-local cf = S.hrp.CFrame
-local p = cf.Position
-if math.abs(p.Y - S.holdY) > 0.02 then
-S.hrp.CFrame = CFrame.new(p.X, S.holdY, p.Z) * (cf - cf.Position)
-end
-end)
-pcall(function()
-local vel = S.hrp.AssemblyLinearVelocity
-if vel and vel.Y ~= 0 then
-S.hrp.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
-end
-end)
-end
 local n = os.clock()
 if n - S.lastGuard >= 0.1 then
 S.lastGuard = n
@@ -611,7 +577,6 @@ end)
 if S.diedConn then pcall(function() S.diedConn:Disconnect() end) end
 S.diedConn = hum.Died:Connect(function()
 if C.INVIS_ENABLED and S.animator then suppress(S.animator) end
-releaseHold()
 end)
 return true
 end
@@ -633,8 +598,6 @@ disable()
 if S.charConn then pcall(function() S.charConn:Disconnect() end) end
 S.charConn = nil
 S.saved = setmetatable({}, { __mode = "k" })
-S.holdY = nil
-S.hrp = nil
 end
 S.charConn = C.lp.CharacterAdded:Connect(function(c)
 if not C.INVIS_ENABLED then return end
@@ -647,7 +610,7 @@ end)
 playerL:AddToggle("swInvisible", {
 Text = "隐身",
 Default = false,
-Tooltip = "沉地动作冻结 55 秒并压制后来动画；只锁定高度防掉虚空，可自由水平移动",
+Tooltip = "沉地动作冻结 55 秒并压制后来动画；不改动角色坐标，射击仍用头部坐标",
 Callback = function(v)
 C.INVIS_ENABLED = v
 if type(C._losCache) == "table" then table.clear(C._losCache) end
@@ -1116,12 +1079,6 @@ return p
 end
 local function getSelfOriginPos(char)
 if not char then return nil end
-if C.INVIS_ENABLED then
-local r = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
-if r and r:IsA("BasePart") then
-return r.Position + Vector3.new(0, C.INVIS_LIFT or 2.6, 0)
-end
-end
 local h = getAimPart(char)
 return h and h.Position or nil
 end
@@ -1865,12 +1822,6 @@ onMyRespawn(c)
 hookMuzzleEvents(c)
 end)
 local function getShootOrigin(myChar)
-if C.INVIS_ENABLED and myChar then
-local r = myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart
-if r and r:IsA("BasePart") then
-return r.Position + Vector3.new(0, C.INVIS_LIFT or 2.6, 0), "ROOT+"
-end
-end
 local ok1, gp = pcall(getGameBodyHead)
 if ok1 and typeof(gp) == "Vector3" then return gp, "HEAD" end
 local h = myChar and getAimPart(myChar)
