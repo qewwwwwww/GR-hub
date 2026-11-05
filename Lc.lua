@@ -451,7 +451,7 @@ local PART_NAMES = {
 "LeftUpperArm", "LeftLowerArm", "RightUpperArm", "RightLowerArm",
 "LeftUpperLeg", "LeftLowerLeg", "RightUpperLeg", "RightLowerLeg",
 }
-local S = { track = nil, anim = nil, thread = nil, saved = setmetatable({}, { __mode = "k" }), muted = setmetatable({}, { __mode = "k" }), animator = nil, freezeAt = FREEZE_TIME, applying = false, lastGuard = 0, guardConn = nil, hbConn = nil, diedConn = nil, charConn = nil }
+local S = { track = nil, anim = nil, thread = nil, saved = setmetatable({}, { __mode = "k" }), muted = setmetatable({}, { __mode = "k" }), animator = nil, freezeAt = FREEZE_TIME, applying = false, lastGuard = 0, guardConn = nil, hbConn = nil, diedConn = nil, charConn = nil, hrp = nil, holdY = nil, holdConn = nil, lastHold = 0 }
 local suppress, restoreMuted
 C.INVIS_ENABLED = false
 local function restoreCollide()
@@ -461,6 +461,34 @@ part.CanCollide = v[1]
 part.CanTouch = v[2]
 end)
 end
+end
+local function stopHold()
+if S.holdConn then pcall(function() S.holdConn:Disconnect() end) end
+S.holdConn = nil
+S.hrp = nil
+S.holdY = nil
+S.lastHold = 0
+end
+local function startHold(char)
+stopHold()
+local hrp = char and char:FindFirstChild("HumanoidRootPart")
+if not hrp or not hrp:IsA("BasePart") then return end
+S.hrp = hrp
+S.holdY = hrp.Position.Y
+S.lastHold = 0
+S.holdConn = C.RunService.Heartbeat:Connect(function()
+if not C.INVIS_ENABLED or S.hrp ~= hrp or S.holdY == nil then return end
+local n = os.clock()
+if n - S.lastHold < 0.1 then return end
+S.lastHold = n
+pcall(function()
+local cf = hrp.CFrame
+local p = cf.Position
+if p.Y < S.holdY - 0.05 then
+hrp.CFrame = CFrame.new(p.X, S.holdY, p.Z) * (cf - cf.Position)
+end
+end)
+end)
 end
 local function stopTrack()
 if S.thread then pcall(task.cancel, S.thread) end
@@ -583,10 +611,12 @@ end
 local function apply(char)
 if not char then return end
 noCollide(char)
+startHold(char)
 startTrack(char)
 end
 local function disable()
 stopTrack()
+stopHold()
 restoreCollide()
 if S.diedConn then pcall(function() S.diedConn:Disconnect() end) end
 S.diedConn = nil
@@ -610,7 +640,7 @@ end)
 playerL:AddToggle("swInvisible", {
 Text = "隐身",
 Default = false,
-Tooltip = "沉地动作冻结 55 秒并压制后来动画；不改动角色坐标，射击仍用头部坐标",
+Tooltip = "沉地动作冻结 55 秒并压制后来动画；只钳 Y 防掉虚空，水平可移动，射击仍用头部坐标",
 Callback = function(v)
 C.INVIS_ENABLED = v
 if type(C._losCache) == "table" then table.clear(C._losCache) end
