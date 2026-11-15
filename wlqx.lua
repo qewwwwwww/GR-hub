@@ -30,8 +30,8 @@ return function(Library, Window, GHub)
         AttackTime      = 0.30,
     }
     C.IGNORE_NAMES   = { Bomber = true }
-    C.ESP_FILL_COLOR    = Color3.fromRGB(255, 60, 60)
-    C.ESP_OUTLINE_COLOR = Color3.fromRGB(255, 200, 60)
+    C.ESP_FILL_COLOR    = Color3.fromRGB(0, 255, 100)
+    C.ESP_OUTLINE_COLOR = Color3.fromRGB(0, 255, 100)
     C.ESP_MAX_DISTANCE  = 500
 
     C.STAMINA_ENABLED = false
@@ -41,6 +41,9 @@ return function(Library, Window, GHub)
     C.SPEED_ENABLED   = false
     C.SPEED_VALUE     = 16
     C._speedConn      = nil
+    C._speedConn2     = nil
+    C._speedConn3     = nil
+    C._speedHum       = nil
 
     C.CF_SPEED_ENABLED = false
     C.CF_SPEED_VALUE   = 1.5
@@ -98,23 +101,63 @@ return function(Library, Window, GHub)
         if C._staminaConn then C._staminaConn:Disconnect(); C._staminaConn = nil end
     end
 
-    local function startSpeed()
-        if C._speedConn then C._speedConn:Disconnect() end
-        C._speedConn = C.RunService.Heartbeat:Connect(function()
-            local char = C.lp.Character
-            local h = char and char:FindFirstChildOfClass("Humanoid")
-            if not h then return end
+    local function applySpeed()
+        local char = C.lp.Character
+        local h = char and char:FindFirstChildOfClass("Humanoid")
+        if not h then return end
+        if h.WalkSpeed ~= C.SPEED_VALUE then
+            h.WalkSpeed = C.SPEED_VALUE
+        end
+        if char:GetAttribute("WalkSpeed") ~= C.SPEED_VALUE then
+            pcall(function() char:SetAttribute("WalkSpeed", C.SPEED_VALUE) end)
+        end
+    end
+
+    local function bindSpeedHum(h)
+        if not h then return end
+        if C._speedHum == h then return end
+        if C._speedConn2 then C._speedConn2:Disconnect(); C._speedConn2 = nil end
+        C._speedHum = h
+        C._speedConn2 = h:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+            if not C.SPEED_ENABLED then return end
             if h.WalkSpeed ~= C.SPEED_VALUE then
                 h.WalkSpeed = C.SPEED_VALUE
             end
         end)
     end
 
+    local function startSpeed()
+        if C._speedConn then C._speedConn:Disconnect() end
+        if C._speedConn3 then C._speedConn3:Disconnect(); C._speedConn3 = nil end
+
+        applySpeed()
+        bindSpeedHum(humOf(C.lp.Character))
+
+        C._speedConn = C.RunService.Heartbeat:Connect(function()
+            if not C.SPEED_ENABLED then return end
+            applySpeed()
+        end)
+
+        C._speedConn3 = C.RunService.RenderStepped:Connect(function()
+            if not C.SPEED_ENABLED then return end
+            applySpeed()
+        end)
+
+        local char = C.lp.Character
+        if char then
+            bindSpeedHum(humOf(char))
+        end
+    end
+
     local function stopSpeed()
         if C._speedConn then C._speedConn:Disconnect(); C._speedConn = nil end
+        if C._speedConn2 then C._speedConn2:Disconnect(); C._speedConn2 = nil end
+        if C._speedConn3 then C._speedConn3:Disconnect(); C._speedConn3 = nil end
+        C._speedHum = nil
         local char = C.lp.Character
         local h = char and char:FindFirstChildOfClass("Humanoid")
         if h then h.WalkSpeed = 16 end
+        if char then pcall(function() char:SetAttribute("WalkSpeed", 16) end) end
     end
 
     local function getMoveVector()
@@ -209,48 +252,31 @@ return function(Library, Window, GHub)
         return nil
     end
 
-    local function makeLabel(z)
-        local root = z:FindFirstChild("HumanoidRootPart") or z.PrimaryPart
-        if not root then return nil end
+    local function makeNameTag(z)
+        local head = z:FindFirstChild("Head") or z:FindFirstChild("HumanoidRootPart") or z.PrimaryPart
+        if not head then return nil end
         local bg = Instance.new("BillboardGui")
-        bg.Name = "ZombieTag"
-        bg.Adornee = root
-        bg.Size = UDim2.new(0, 140, 0, 40)
-        bg.StudsOffset = Vector3.new(0, 2.6, 0)
+        bg.Name = "ZombieName"
+        bg.Adornee = head
+        bg.Size = UDim2.new(0, 120, 0, 16)
+        bg.StudsOffset = Vector3.new(0, 1.8, 0)
         bg.AlwaysOnTop = true
         bg.LightInfluence = 0
         bg.ResetOnSpawn = false
 
-        local fr = Instance.new("Frame")
-        fr.Size = UDim2.new(1, 0, 1, 0)
-        fr.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-        fr.BackgroundTransparency = 0.45
-        fr.BorderSizePixel = 0
-        fr.Parent = bg
-        Instance.new("UICorner", fr).CornerRadius = UDim.new(0, 4)
-
         local name = Instance.new("TextLabel")
-        name.Size = UDim2.new(1, -4, 0, 16)
-        name.Position = UDim2.new(0, 2, 0, 2)
+        name.Size = UDim2.new(1, 0, 1, 0)
         name.BackgroundTransparency = 1
-        name.TextColor3 = Color3.fromRGB(255, 120, 120)
+        name.TextColor3 = Color3.fromRGB(0, 255, 100)
+        name.TextStrokeTransparency = 0.3
+        name.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
         name.Font = Enum.Font.GothamBold
-        name.TextSize = 12
+        name.TextSize = 13
         name.Text = z.Name
-        name.Parent = fr
-
-        local dist = Instance.new("TextLabel")
-        dist.Size = UDim2.new(1, -4, 0, 14)
-        dist.Position = UDim2.new(0, 2, 0, 18)
-        dist.BackgroundTransparency = 1
-        dist.TextColor3 = Color3.fromRGB(200, 200, 200)
-        dist.Font = Enum.Font.Gotham
-        dist.TextSize = 10
-        dist.Text = "0 studs"
-        dist.Parent = fr
+        name.Parent = bg
 
         bg.Parent = game:GetService("CoreGui")
-        return { gui = bg, name = name, dist = dist, root = root }
+        return { gui = bg, name = name, head = head }
     end
 
     local function makeHighlight(z)
@@ -258,8 +284,8 @@ return function(Library, Window, GHub)
         h.Name = "ZombieHL"
         h.FillColor = C.ESP_FILL_COLOR
         h.OutlineColor = C.ESP_OUTLINE_COLOR
-        h.FillTransparency = 0.6
-        h.OutlineTransparency = 0.15
+        h.FillTransparency = 0.55
+        h.OutlineTransparency = 0.1
         h.Adornee = z
         h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         h.Parent = z
@@ -293,22 +319,20 @@ return function(Library, Window, GHub)
             if isAlive(z) then
                 local d = C._espData[z]
                 if not d then
-                    local tag = makeLabel(z)
+                    local tag = makeNameTag(z)
                     d = {
                         gui  = tag and tag.gui,
                         name = tag and tag.name,
-                        dist = tag and tag.dist,
-                        root = tag and tag.root,
                         hl   = makeHighlight(z),
                     }
                     C._espData[z] = d
                 end
-                if d.dist and d.root and myRoot then
-                    local dd = (d.root.Position - myRoot.Position).Magnitude
-                    d.dist.Text = string.format("%.0f studs", dd)
+                if myRoot and d.gui then
+                    local root = z:FindFirstChild("HumanoidRootPart") or z.PrimaryPart
+                    local dd = root and (root.Position - myRoot.Position).Magnitude or 0
                     local vis = dd <= C.ESP_MAX_DISTANCE
-                    if d.gui then d.gui.Enabled = vis end
-                    if d.hl  then d.hl.Enabled  = vis end
+                    d.gui.Enabled = vis
+                    if d.hl then d.hl.Enabled = vis end
                 end
             else
                 clearESP(z)
@@ -415,6 +439,10 @@ return function(Library, Window, GHub)
         C._cachedMelee = nil
         C._lastScan = 0
         hookDeath(c)
+        if C.SPEED_ENABLED then
+            bindSpeedHum(humOf(c))
+            applySpeed()
+        end
     end)
 
     local MainTab = Window:AddTab("杀戮", "sword")
@@ -458,7 +486,7 @@ return function(Library, Window, GHub)
     PL:AddToggle("localSpeed", {
         Text = "移速调节",
         Default = false,
-        Tooltip = "循环锁定 WalkSpeed，防止被顶掉",
+        Tooltip = "锁定 WalkSpeed，被改写会立刻改回",
         Callback = function(v)
             C.SPEED_ENABLED = v
             if v then startSpeed() else stopSpeed() end
@@ -487,7 +515,10 @@ return function(Library, Window, GHub)
         Text = "移速值",
         Default = C.SPEED_VALUE,
         Min = 1, Max = 50, Rounding = 0, Suffix = " ws",
-        Callback = function(v) C.SPEED_VALUE = v end,
+        Callback = function(v)
+            C.SPEED_VALUE = v
+            if C.SPEED_ENABLED then applySpeed() end
+        end,
     })
     PR:AddSlider("localCfValue", {
         Text = "坐标加速倍率",
