@@ -762,7 +762,7 @@ return function(Library, Window, GHub)
     Shoot:AddSlider("shootInterval", {
         Text = "枪击冷却",
         Default = C.SHOOT_INTERVAL,
-        Min = 0.1, Max = 3, Rounding = 2, Suffix = " s",
+        Min = 0.01, Max = 3, Rounding = 2, Suffix = " s",
         Callback = function(v) C.SHOOT_INTERVAL = v end,
     })
     Shoot:AddSlider("shootBatch", {
