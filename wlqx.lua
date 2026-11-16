@@ -42,6 +42,14 @@ return function(Library, Window, GHub)
     C._fireConn       = nil
     C._fireLast       = 0
 
+    C.SHOOT_ENABLED   = false
+    C.SHOOT_INTERVAL  = 0.3
+    C.SHOOT_BATCH_MAX = 8
+    C.SHOOT_RANGE     = 500
+    C._shootConn      = nil
+    C._shootLast      = 0
+    C._shootTool      = nil
+
     C.STAMINA_ENABLED = false
     C.STAMINA_MAX     = 100
     C._staminaConn    = nil
@@ -85,9 +93,27 @@ return function(Library, Window, GHub)
         return m:IsDescendantOf(C.ENTITIES)
     end
 
+    local function isFireTarget(m)
+        if not m or not m.Parent then return false end
+        if playerOf(m) then return false end
+        return m:IsDescendantOf(C.ENTITIES)
+    end
+
     local function isAlive(m)
         local h = humOf(m)
         return h ~= nil and h.Health > 0
+    end
+
+    local function wearTool(tool)
+        local char = getChar()
+        if not tool or not char then return false end
+        if tool.Parent == char then return true end
+        local bp = C.lp:FindFirstChild("Backpack")
+        if bp and tool.Parent == bp then
+            tool.Parent = char
+            return true
+        end
+        return tool.Parent == char
     end
 
     local function startStamina()
@@ -239,7 +265,7 @@ return function(Library, Window, GHub)
         if c and c.Parent == ch and isMeleeTool(c) then return c end
         if ch then
             for _, t in ipairs(ch:GetChildren()) do
-                if isMeleeTool(t) then C._cachedMelee = t; return t end
+                if isMeleeTool(t) then C._cachedMelee = t; wearTool(t); return t end
             end
         end
         local bp = C.lp:FindFirstChild("Backpack")
@@ -247,7 +273,7 @@ return function(Library, Window, GHub)
             for _, t in ipairs(bp:GetChildren()) do
                 if isMeleeTool(t) then
                     local h = ch and humOf(ch)
-                    if h then pcall(function() h:EquipTool(t) end) end
+                    if h then pcall(function() wearTool(t) end) end
                     task.wait()
                     C._cachedMelee = t
                     return t
@@ -277,12 +303,45 @@ return function(Library, Window, GHub)
     local function equipFlamethrower()
         local tool = findFlamethrower()
         if not tool then return nil end
-        local char = getChar()
-        local h = char and humOf(char)
-        if h and tool.Parent ~= char then
-            pcall(function() h:EquipTool(tool) end)
-            task.wait(0.1)
+        wearTool(tool)
+        return tool
+    end
+
+    local GUN_EXCLUDE = { Flamethrower = true }
+
+    local function isGunTool(t)
+        if not t or not t:IsA("Tool") then return false end
+        if GUN_EXCLUDE[t.Name] then return false end
+        if t:FindFirstChild("Animations") and t.Animations:FindFirstChild("SwingUpEnd") then
+            return false
         end
+        if t:FindFirstChild("Grip") == nil and t:FindFirstChild("Handle") == nil then
+            return false
+        end
+        return true
+    end
+
+    local function findGun()
+        local char = getChar()
+        if char then
+            for _, t in ipairs(char:GetChildren()) do
+                if isGunTool(t) then return t end
+            end
+        end
+        local bp = C.lp:FindFirstChild("Backpack")
+        if bp then
+            for _, t in ipairs(bp:GetChildren()) do
+                if isGunTool(t) then return t end
+            end
+        end
+        return nil
+    end
+
+    local function equipGun()
+        local tool = findGun()
+        if not tool then return nil end
+        C._shootTool = tool
+        wearTool(tool)
         return tool
     end
 
@@ -302,17 +361,13 @@ return function(Library, Window, GHub)
     local function fireAllZombies()
         local weapon = equipFlamethrower()
         if not weapon then return end
-        if not weapon:IsDescendantOf(getChar()) then
-            local h = humOf(getChar())
-            if h then pcall(function() h:EquipTool(weapon) end) end
-        end
 
         local myRoot = getChar() and getChar():FindFirstChild("HumanoidRootPart")
         local origin = myRoot and myRoot.Position or Vector3.zero
 
         local zombies = {}
         for _, e in ipairs(C.ENTITIES:GetChildren()) do
-            if isZombie(e) and isAlive(e) then
+            if isFireTarget(e) and isAlive(e) then
                 local hitPart = e:FindFirstChild("Torso") or e:FindFirstChild("HumanoidRootPart") or e.PrimaryPart
                 if hitPart then
                     local dist = (hitPart.Position - origin).Magnitude
@@ -367,6 +422,72 @@ return function(Library, Window, GHub)
 
     local function stopFireLoop()
         if C._fireConn then C._fireConn:Disconnect(); C._fireConn = nil end
+    end
+
+    local function shootAllZombies()
+        local weapon = equipGun()
+        if not weapon then return end
+
+        local myRoot = getChar() and getChar():FindFirstChild("HumanoidRootPart")
+        local origin = myRoot and myRoot.Position or Vector3.zero
+
+        local zombies = {}
+        for _, e in ipairs(C.ENTITIES:GetChildren()) do
+            if isFireTarget(e) and isAlive(e) then
+                local hitPart = e:FindFirstChild("Head") or e:FindFirstChild("Torso") or e:FindFirstChild("HumanoidRootPart") or e.PrimaryPart
+                if hitPart then
+                    local dist = (hitPart.Position - origin).Magnitude
+                    if dist <= C.SHOOT_RANGE then
+                        zombies[#zombies + 1] = { entity = e, part = hitPart, dist = dist }
+                    end
+                end
+            end
+        end
+        if #zombies == 0 then return end
+
+        table.sort(zombies, function(a, b) return a.dist < b.dist end)
+
+        local batch = {}
+        for i = 1, math.min(C.SHOOT_BATCH_MAX, #zombies) do
+            local z = zombies[i]
+            local dir = (z.part.Position - origin).Unit
+            batch[#batch + 1] = {
+                hitArmor = false,
+                direction = dir,
+                penetrationCount = 0,
+                projectile = fakeProjectile(),
+                result = {
+                    Normal = Vector3.new(0, 1, 0),
+                    Position = z.part.Position,
+                    Instance = z.part,
+                    Material = Enum.Material.Plastic,
+                    Distance = z.dist
+                },
+                target = z.entity
+            }
+        end
+
+        if #batch > 0 then
+            pcall(function()
+                C.GunSys:FireServer("DamageBatch", weapon, batch)
+            end)
+        end
+    end
+
+    local function startShootLoop()
+        if C._shootConn then return end
+        C._shootConn = C.RunService.Heartbeat:Connect(function()
+            if not C.SHOOT_ENABLED then return end
+            local now = os.clock()
+            if now - C._shootLast >= C.SHOOT_INTERVAL then
+                C._shootLast = now
+                pcall(shootAllZombies)
+            end
+        end)
+    end
+
+    local function stopShootLoop()
+        if C._shootConn then C._shootConn:Disconnect(); C._shootConn = nil end
     end
 
     local function makeNameTag(z)
@@ -584,10 +705,10 @@ return function(Library, Window, GHub)
         end })
 
     R:AddSlider("killRange", { Text = "杀戮范围", Default = C.ATTACK_RANGE,
-        Min = 5, Max = 100, Rounding = 0, Suffix = " studs",
+        Min = 5, Max = 30, Rounding = 0, Suffix = " studs",
         Callback = function(v) C.ATTACK_RANGE = v end })
     R:AddSlider("killSpeed", { Text = "攻击间隔", Default = math.floor(C.ATTACK_INTERVAL * 100),
-        Min = 5, Max = 100, Rounding = 0, Suffix = " ×0.01s",
+        Min = 1, Max = 100, Rounding = 0, Suffix = " ×0.01s",
         Callback = function(v) C.ATTACK_INTERVAL = v / 100 end })
     R:AddSlider("killMax", { Text = "单次目标数", Default = C.MAX_TARGETS,
         Min = 1, Max = 5, Rounding = 0,
@@ -614,7 +735,7 @@ return function(Library, Window, GHub)
     Fire:AddSlider("fireInterval", {
         Text = "火烧冷却",
         Default = C.FIRE_INTERVAL,
-        Min = 0.1, Max = 3, Rounding = 2, Suffix = " s",
+        Min = 0.2, Max = 3, Rounding = 2, Suffix = " s",
         Callback = function(v) C.FIRE_INTERVAL = v end,
     })
     Fire:AddSlider("fireBatch", {
@@ -628,6 +749,40 @@ return function(Library, Window, GHub)
         Default = C.FIRE_RANGE,
         Min = 100, Max = 1000, Rounding = 0, Suffix = " studs",
         Callback = function(v) C.FIRE_RANGE = v end,
+    })
+
+    local Shoot = MainTab:AddRightGroupbox("全图枪击", "crosshair")
+    Shoot:AddToggle("shootEnable", {
+        Text = "启用枪击",
+        Default = false,
+        Tooltip = "自动装备枪械并伪装 DamageBatch 发包",
+        Callback = function(v)
+            C.SHOOT_ENABLED = v
+            if v then
+                startShootLoop()
+                Library:Notify("枪击：自动装备枪械并伪装发包", 2)
+            else
+                stopShootLoop()
+            end
+        end,
+    })
+    Shoot:AddSlider("shootInterval", {
+        Text = "枪击冷却",
+        Default = C.SHOOT_INTERVAL,
+        Min = 0.1, Max = 3, Rounding = 2, Suffix = " s",
+        Callback = function(v) C.SHOOT_INTERVAL = v end,
+    })
+    Shoot:AddSlider("shootBatch", {
+        Text = "单包目标数",
+        Default = C.SHOOT_BATCH_MAX,
+        Min = 1, Max = 20, Rounding = 0,
+        Callback = function(v) C.SHOOT_BATCH_MAX = v end,
+    })
+    Shoot:AddSlider("shootRange", {
+        Text = "枪击距离",
+        Default = C.SHOOT_RANGE,
+        Min = 100, Max = 1000, Rounding = 0, Suffix = " studs",
+        Callback = function(v) C.SHOOT_RANGE = v end,
     })
 
     local LocalTab = Window:AddTab("本地", "user")
@@ -735,6 +890,10 @@ return function(Library, Window, GHub)
             if O.fireInterval  then O.fireInterval:SetValue(0.4) end
             if O.fireBatch     then O.fireBatch:SetValue(8) end
             if O.fireRange     then O.fireRange:SetValue(500) end
+            if O.shootEnable   then O.shootEnable:SetValue(false) end
+            if O.shootInterval then O.shootInterval:SetValue(0.3) end
+            if O.shootBatch    then O.shootBatch:SetValue(8) end
+            if O.shootRange    then O.shootRange:SetValue(500) end
             if O.localSpeed       then O.localSpeed:SetValue(false) end
             if O.localCfSpeed     then O.localCfSpeed:SetValue(false) end
             if O.localStamina     then O.localStamina:SetValue(false) end
@@ -763,11 +922,11 @@ return function(Library, Window, GHub)
         end
     end)
 
-    Library:Notify("杀戮 / 透视 / 火烧 / 本地玩家 / 娱乐模块已加载", 3)
+    Library:Notify("杀戮 / 透视 / 火烧 / 枪击 / 本地玩家 / 娱乐模块已加载", 3)
 
     local function unload()
         C.running = false
-        stopStamina(); stopSpeed(); stopCoordSpeed(); stopSpin(); stopFireLoop()
+        stopStamina(); stopSpeed(); stopCoordSpeed(); stopSpin(); stopFireLoop(); stopShootLoop()
         for z in pairs(C._espData) do clearESP(z) end
     end
 
