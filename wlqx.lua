@@ -33,6 +33,10 @@ C.SWING_PARAMS = {
 C.IGNORE_NAMES   = { Bomber = true }
 C.ESP_FILL_COLOR    = Color3.fromRGB(0, 255, 100)
 C.ESP_OUTLINE_COLOR = Color3.fromRGB(0, 255, 100)
+C.ESP_BOMBER_FILL   = Color3.fromRGB(255, 255, 0)
+C.ESP_BOMBER_OUTLINE= Color3.fromRGB(255, 255, 0)
+C.ESP_BOSS_FILL     = Color3.fromRGB(180, 0, 255)
+C.ESP_BOSS_OUTLINE  = Color3.fromRGB(180, 0, 255)
 C.ESP_MAX_DISTANCE  = 500
 
 C.SHOOT_ENABLED   = false
@@ -81,9 +85,23 @@ local function humOf(m) return m and m:FindFirstChildWhichIsA("Humanoid") end
 local function isIgnored(m) return C.IGNORE_NAMES[m.Name] == true end
 local function playerOf(m) return C.Players:GetPlayerFromCharacter(m) end
 
+local function isBomber(m)
+    return m ~= nil and string.find(m.Name, "Bomber", 1, true) ~= nil
+end
+local function isBoss(m)
+    return m ~= nil and string.find(m.Name, "Boss", 1, true) ~= nil
+end
+
 local function isZombie(m)
     if not m or not m.Parent then return false end
     if isIgnored(m) then return false end
+    if playerOf(m) then return false end
+    return m:IsDescendantOf(C.ENTITIES)
+end
+
+-- 枪击用：不套忽略名单
+local function isShootTarget(m)
+    if not m or not m.Parent then return false end
     if playerOf(m) then return false end
     return m:IsDescendantOf(C.ENTITIES)
 end
@@ -317,7 +335,8 @@ local function shootAllZombies()
     local origin = myRoot and myRoot.Position or Vector3.zero
     local zombies = {}
     for _, e in ipairs(C.ENTITIES:GetChildren()) do
-        if isZombie(e) and isAlive(e) then
+        -- 枪击不套忽略名单，Bomber 也打
+        if isShootTarget(e) and isAlive(e) then
             local hitPart = e:FindFirstChild("Head") or e:FindFirstChild("Torso") or e:FindFirstChild("HumanoidRootPart") or e.PrimaryPart
             if hitPart then
                 local dist = (hitPart.Position - origin).Magnitude
@@ -368,9 +387,20 @@ local function stopShootLoop()
     if C._shootConn then C._shootConn:Disconnect(); C._shootConn = nil end
 end
 
+-- 透视：按类型取色（Bomber 黄 / Boss 紫 / 普通绿）
+local function espColors(z)
+    if isBomber(z) then
+        return C.ESP_BOMBER_FILL, C.ESP_BOMBER_OUTLINE
+    elseif isBoss(z) then
+        return C.ESP_BOSS_FILL, C.ESP_BOSS_OUTLINE
+    end
+    return C.ESP_FILL_COLOR, C.ESP_OUTLINE_COLOR
+end
+
 local function makeNameTag(z)
     local body = z:FindFirstChild("HumanoidRootPart") or z:FindFirstChild("Torso") or z.PrimaryPart
     if not body then return nil end
+    local _, outline = espColors(z)
     local bg = Instance.new("BillboardGui")
     bg.Name = "ZombieName"
     bg.Adornee = body
@@ -382,7 +412,7 @@ local function makeNameTag(z)
     local name = Instance.new("TextLabel")
     name.Size = UDim2.new(1, 0, 1, 0)
     name.BackgroundTransparency = 1
-    name.TextColor3 = Color3.fromRGB(0, 255, 100)
+    name.TextColor3 = outline
     name.TextStrokeTransparency = 0.3
     name.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
     name.Font = Enum.Font.GothamBold
@@ -393,10 +423,11 @@ local function makeNameTag(z)
     return { gui = bg, name = name, body = body }
 end
 local function makeHighlight(z)
+    local fill, outline = espColors(z)
     local h = Instance.new("Highlight")
     h.Name = "ZombieHL"
-    h.FillColor = C.ESP_FILL_COLOR
-    h.OutlineColor = C.ESP_OUTLINE_COLOR
+    h.FillColor = fill
+    h.OutlineColor = outline
     h.FillTransparency = 0.55
     h.OutlineTransparency = 0.1
     h.Adornee = z
@@ -415,13 +446,16 @@ end
 local function collectZombies()
     local list = {}
     for _, e in ipairs(C.ENTITIES:GetChildren()) do
-        if isZombie(e) then list[#list + 1] = e end
+        -- 透视不再排除 Bomber，全部显示（颜色区分）
+        if e.Parent and not playerOf(e) and e:IsDescendantOf(C.ENTITIES) then
+            list[#list + 1] = e
+        end
     end
     return list
 end
 local function refreshESP()
     for z in pairs(C._espData) do
-        if not z or not z.Parent or not isZombie(z) then clearESP(z) end
+        if not z or not z.Parent then clearESP(z) end
     end
     local ch = getChar()
     local myRoot = ch and ch:FindFirstChild("HumanoidRootPart")
@@ -569,11 +603,12 @@ L:AddToggle("killEsp", { Text = "透视僵尸", Default = true,
         if not v then for z in pairs(C._espData) do clearESP(z) end end
     end })
 L:AddToggle("killBomber", { Text = "忽略 Bomber", Default = true,
+    Tooltip = "仅影响杀戮与透视过滤（透视仍会黄色显示）",
     Callback = function(v)
         if v then C.IGNORE_NAMES.Bomber = true else C.IGNORE_NAMES.Bomber = nil end
     end })
 
--- 全图枪击（兼容枪械与喷火器）
+-- 全图枪击（兼容枪械与喷火器，不忽略 Bomber）
 local Shoot = MainTab:AddLeftGroupbox("全图枪击", "crosshair")
 Shoot:AddToggle("shootEnable", {
     Text = "启用枪击", Default = false,
