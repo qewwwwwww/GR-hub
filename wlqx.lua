@@ -2,26 +2,6 @@ return function(Library, Window, GHub)
     local Players = game:GetService("Players")
     local lp = Players.LocalPlayer
 
-    task.wait(3)
-
-    do
-        local ok, mt = pcall(getrawmetatable, lp)
-        if ok and mt and type(hookmetamethod) == "function" then
-            local oldNamecall = mt.__namecall
-            if oldNamecall then
-                pcall(function()
-                    hookmetamethod(lp, "__namecall", function(self, ...)
-                        local method = getnamecallmethod()
-                        if self == lp and method == "Kick" then
-                            return task.wait(9e9)
-                        end
-                        return oldNamecall(self, ...)
-                    end)
-                end)
-            end
-        end
-    end
-
     local C = {}
     C.genv = (type(getgenv) == "function") and getgenv() or _G
     GHub = GHub or C.genv.GRHub
@@ -83,6 +63,8 @@ return function(Library, Window, GHub)
     C._speedConn2     = nil
     C._speedConn3     = nil
     C._speedHum       = nil
+    C._speedKillConn  = nil
+    C._origWalkSpeed  = 16
 
     C.CF_SPEED_ENABLED = false
     C.CF_SPEED_VALUE   = 1.5
@@ -164,15 +146,29 @@ return function(Library, Window, GHub)
         end
     end
 
+    local function killSpeedWatchers(h)
+        if not h then return end
+        if C._speedKillConn then C._speedKillConn:Disconnect(); C._speedKillConn = nil end
+        C._speedKillConn = h:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+            if not C.SPEED_ENABLED then return end
+            if h.WalkSpeed ~= C.SPEED_VALUE then
+                h.WalkSpeed = C.SPEED_VALUE
+            end
+        end)
+        h.WalkSpeed = C.SPEED_VALUE
+    end
+
     local function bindSpeedHum(h)
         if not h then return end
         if C._speedHum == h then return end
         if C._speedConn2 then C._speedConn2:Disconnect(); C._speedConn2 = nil end
         C._speedHum = h
+        C._origWalkSpeed = h.WalkSpeed
         C._speedConn2 = h:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
             if not C.SPEED_ENABLED then return end
             if h.WalkSpeed ~= C.SPEED_VALUE then h.WalkSpeed = C.SPEED_VALUE end
         end)
+        killSpeedWatchers(h)
     end
 
     local function startSpeed()
@@ -196,6 +192,7 @@ return function(Library, Window, GHub)
         if C._speedConn then C._speedConn:Disconnect(); C._speedConn = nil end
         if C._speedConn2 then C._speedConn2:Disconnect(); C._speedConn2 = nil end
         if C._speedConn3 then C._speedConn3:Disconnect(); C._speedConn3 = nil end
+        if C._speedKillConn then C._speedKillConn:Disconnect(); C._speedKillConn = nil end
         C._speedHum = nil
         local char = C.lp.Character
         local h = char and char:FindFirstChildOfClass("Humanoid")
