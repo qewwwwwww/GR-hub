@@ -8,10 +8,11 @@ return function(Library, Window, GHub)
     C.Workspace    = game:GetService("Workspace")
     C.Players      = game:GetService("Players")
     C.Replicated   = game:GetService("ReplicatedStorage")
-    C.TweenService = game:GetService("TweenService")
+    C.CoreGui      = game:GetService("CoreGui")
 
     C.lp = C.Players.LocalPlayer
     C.Event = C.Replicated:WaitForChild("Events"):WaitForChild("MeleeSystem")
+    C.GunSys = C.Replicated:WaitForChild("Events"):WaitForChild("GunSystem")
     C.ENTITIES = C.Workspace:WaitForChild("Game"):WaitForChild("Entities")
 
     C.running          = false
@@ -34,6 +35,13 @@ return function(Library, Window, GHub)
     C.ESP_OUTLINE_COLOR = Color3.fromRGB(0, 255, 100)
     C.ESP_MAX_DISTANCE  = 500
 
+    C.FIRE_ENABLED    = false
+    C.FIRE_INTERVAL   = 0.4
+    C.FIRE_BATCH_MAX  = 8
+    C.FIRE_RANGE      = 500
+    C._fireConn       = nil
+    C._fireLast       = 0
+
     C.STAMINA_ENABLED = false
     C.STAMINA_MAX     = 100
     C._staminaConn    = nil
@@ -50,7 +58,7 @@ return function(Library, Window, GHub)
     C._cfConn          = nil
 
     C.SPIN_ENABLED    = false
-    C.SPIN_SPEED      = 180
+    C.SPIN_SPEED      = 250
     C.SPIN_DIR        = 1
     C._spinAngle      = 0
     C._origAutoRotate = true
@@ -144,9 +152,7 @@ return function(Library, Window, GHub)
         end)
 
         local char = C.lp.Character
-        if char then
-            bindSpeedHum(humOf(char))
-        end
+        if char then bindSpeedHum(humOf(char)) end
     end
 
     local function stopSpeed()
@@ -252,14 +258,125 @@ return function(Library, Window, GHub)
         return nil
     end
 
+    local function findFlamethrower()
+        local char = getChar()
+        if char then
+            for _, t in ipairs(char:GetChildren()) do
+                if t:IsA("Tool") and t.Name == "Flamethrower" then return t end
+            end
+        end
+        local bp = C.lp:FindFirstChild("Backpack")
+        if bp then
+            for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") and t.Name == "Flamethrower" then return t end
+            end
+        end
+        return nil
+    end
+
+    local function equipFlamethrower()
+        local tool = findFlamethrower()
+        if not tool then return nil end
+        local char = getChar()
+        local h = char and humOf(char)
+        if h and tool.Parent ~= char then
+            pcall(function() h:EquipTool(tool) end)
+            task.wait(0.1)
+        end
+        return tool
+    end
+
+    local function fakeProjectile()
+        local p = Instance.new("Part")
+        p.Name = "Part"
+        p.Anchored = true
+        p.CanCollide = false
+        p.Transparency = 1
+        p.Size = Vector3.new(0.2, 0.2, 0.2)
+        p.CFrame = CFrame.new(0, -9999, 0)
+        p.Parent = C.Workspace.CurrentCamera
+        task.delay(0.05, function() p:Destroy() end)
+        return p
+    end
+
+    local function fireAllZombies()
+        local weapon = equipFlamethrower()
+        if not weapon then return end
+        if not weapon:IsDescendantOf(getChar()) then
+            local h = humOf(getChar())
+            if h then pcall(function() h:EquipTool(weapon) end) end
+        end
+
+        local myRoot = getChar() and getChar():FindFirstChild("HumanoidRootPart")
+        local origin = myRoot and myRoot.Position or Vector3.zero
+
+        local zombies = {}
+        for _, e in ipairs(C.ENTITIES:GetChildren()) do
+            if isZombie(e) and isAlive(e) then
+                local hitPart = e:FindFirstChild("Torso") or e:FindFirstChild("HumanoidRootPart") or e.PrimaryPart
+                if hitPart then
+                    local dist = (hitPart.Position - origin).Magnitude
+                    if dist <= C.FIRE_RANGE then
+                        zombies[#zombies + 1] = { entity = e, part = hitPart, dist = dist }
+                    end
+                end
+            end
+        end
+        if #zombies == 0 then return end
+
+        table.sort(zombies, function(a, b) return a.dist < b.dist end)
+
+        local batch = {}
+        for i = 1, math.min(C.FIRE_BATCH_MAX, #zombies) do
+            local z = zombies[i]
+            local dir = (z.part.Position - origin).Unit
+            batch[#batch + 1] = {
+                hitArmor = false,
+                direction = dir,
+                penetrationCount = 1,
+                projectile = fakeProjectile(),
+                result = {
+                    Normal = -dir,
+                    Position = z.part.Position,
+                    Instance = z.part,
+                    Material = Enum.Material.Plastic,
+                    Distance = z.dist
+                },
+                target = z.entity
+            }
+        end
+
+        if #batch > 0 then
+            pcall(function()
+                C.GunSys:FireServer("DamageBatch", weapon, batch)
+            end)
+        end
+    end
+
+    local function startFireLoop()
+        if C._fireConn then return end
+        C._fireConn = C.RunService.Heartbeat:Connect(function()
+            if not C.FIRE_ENABLED then return end
+            local now = os.clock()
+            if now - C._fireLast >= C.FIRE_INTERVAL then
+                C._fireLast = now
+                pcall(fireAllZombies)
+            end
+        end)
+    end
+
+    local function stopFireLoop()
+        if C._fireConn then C._fireConn:Disconnect(); C._fireConn = nil end
+    end
+
     local function makeNameTag(z)
-        local head = z:FindFirstChild("Head") or z:FindFirstChild("HumanoidRootPart") or z.PrimaryPart
-        if not head then return nil end
+        local body = z:FindFirstChild("HumanoidRootPart") or z:FindFirstChild("Torso") or z.PrimaryPart
+        if not body then return nil end
         local bg = Instance.new("BillboardGui")
         bg.Name = "ZombieName"
-        bg.Adornee = head
+        bg.Adornee = body
         bg.Size = UDim2.new(0, 120, 0, 16)
-        bg.StudsOffset = Vector3.new(0, 1.8, 0)
+        bg.StudsOffset = Vector3.new(0, 1.2, 0)
         bg.AlwaysOnTop = true
         bg.LightInfluence = 0
         bg.ResetOnSpawn = false
@@ -275,8 +392,8 @@ return function(Library, Window, GHub)
         name.Text = z.Name
         name.Parent = bg
 
-        bg.Parent = game:GetService("CoreGui")
-        return { gui = bg, name = name, head = head }
+        bg.Parent = C.CoreGui
+        return { gui = bg, name = name, body = body }
     end
 
     local function makeHighlight(z)
@@ -321,9 +438,9 @@ return function(Library, Window, GHub)
                 if not d then
                     local tag = makeNameTag(z)
                     d = {
-                        gui  = tag and tag.gui,
+                        gui = tag and tag.gui,
                         name = tag and tag.name,
-                        hl   = makeHighlight(z),
+                        hl  = makeHighlight(z),
                     }
                     C._espData[z] = d
                 end
@@ -479,6 +596,40 @@ return function(Library, Window, GHub)
         Min = 50, Max = 1000, Rounding = 0, Suffix = " studs",
         Callback = function(v) C.ESP_MAX_DISTANCE = v end })
 
+    local Fire = MainTab:AddRightGroupbox("全图火烧", "flame")
+    Fire:AddToggle("fireEnable", {
+        Text = "启用火烧",
+        Default = false,
+        Tooltip = "自动装备喷火器并伪装 DamageBatch 发包",
+        Callback = function(v)
+            C.FIRE_ENABLED = v
+            if v then
+                startFireLoop()
+                Library:Notify("火烧：自动装备喷火器并伪装发包", 2)
+            else
+                stopFireLoop()
+            end
+        end,
+    })
+    Fire:AddSlider("fireInterval", {
+        Text = "火烧冷却",
+        Default = C.FIRE_INTERVAL,
+        Min = 0.1, Max = 3, Rounding = 2, Suffix = " s",
+        Callback = function(v) C.FIRE_INTERVAL = v end,
+    })
+    Fire:AddSlider("fireBatch", {
+        Text = "单包目标数",
+        Default = C.FIRE_BATCH_MAX,
+        Min = 1, Max = 20, Rounding = 0,
+        Callback = function(v) C.FIRE_BATCH_MAX = v end,
+    })
+    Fire:AddSlider("fireRange", {
+        Text = "火烧距离",
+        Default = C.FIRE_RANGE,
+        Min = 100, Max = 1000, Rounding = 0, Suffix = " studs",
+        Callback = function(v) C.FIRE_RANGE = v end,
+    })
+
     local LocalTab = Window:AddTab("本地", "user")
     local PL = LocalTab:AddLeftGroupbox("玩家功能", "user")
     local PR = LocalTab:AddRightGroupbox("参数", "sliders-horizontal")
@@ -557,14 +708,12 @@ return function(Library, Window, GHub)
     FR:AddSlider("funSpinSpeed", {
         Text = "转速",
         Default = C.SPIN_SPEED,
-        Min = 1, Max = 250, Rounding = 0, Suffix = " °/s",
+        Min = 250, Max = 1000, Rounding = 0, Suffix = " °/s",
         Callback = function(v) C.SPIN_SPEED = v end,
     })
 
     local MiscTab = Window:AddTab("杂项", "settings")
-    local ML = MiscTab:AddLeftGroupbox("状态", "activity")
-    local MR = MiscTab:AddRightGroupbox("操作", "wrench")
-    local diag = ML:AddLabel("等待数据...")
+    local MR = MiscTab:AddLeftGroupbox("操作", "wrench")
 
     MR:AddButton({
         Text = "立即重扫",
@@ -582,6 +731,10 @@ return function(Library, Window, GHub)
             if O.killSpeed     then O.killSpeed:SetValue(12) end
             if O.killMax       then O.killMax:SetValue(3) end
             if O.killEspDist   then O.killEspDist:SetValue(500) end
+            if O.fireEnable    then O.fireEnable:SetValue(false) end
+            if O.fireInterval  then O.fireInterval:SetValue(0.4) end
+            if O.fireBatch     then O.fireBatch:SetValue(8) end
+            if O.fireRange     then O.fireRange:SetValue(500) end
             if O.localSpeed       then O.localSpeed:SetValue(false) end
             if O.localCfSpeed     then O.localCfSpeed:SetValue(false) end
             if O.localStamina     then O.localStamina:SetValue(false) end
@@ -589,34 +742,10 @@ return function(Library, Window, GHub)
             if O.localCfValue     then O.localCfValue:SetValue(1.5) end
             if O.localStaminaMax  then O.localStaminaMax:SetValue(100) end
             if O.funSpin          then O.funSpin:SetValue(false) end
-            if O.funSpinSpeed     then O.funSpinSpeed:SetValue(180) end
+            if O.funSpinSpeed     then O.funSpinSpeed:SetValue(250) end
             Library:Notify("已恢复默认", 3)
         end,
     })
-
-    task.spawn(function()
-        while true do
-            task.wait(0.5)
-            pcall(function()
-                local n = 0
-                for _, e in ipairs(C.ENTITIES:GetChildren()) do
-                    if isZombie(e) then n = n + 1 end
-                end
-                diag:SetText(string.format(
-                    "杀戮:%s | 透视:%s | 死亡:%s\n移速:%s(%d) | 坐标加速:%s(%.1f×) | 体力:%s(%d)\n转圈:%s(%d°/s) | 武器:%s | 僵尸:%d | 锁定:%d\n范围:%d | 间隔:%.2fs | 开火:%d | 最后:%s",
-                    C.running and "运行" or "待机",
-                    C.ESP_ENABLED and "开" or "关",
-                    C.isDead and "是" or "否",
-                    C.SPEED_ENABLED and "开" or "关", C.SPEED_VALUE,
-                    C.CF_SPEED_ENABLED and "开" or "关", C.CF_SPEED_VALUE,
-                    C.STAMINA_ENABLED and "开" or "关", C.STAMINA_MAX,
-                    C.SPIN_ENABLED and "开" or "关", C.SPIN_SPEED,
-                    C._lastGun, n, #C._cachedTargets,
-                    C.ATTACK_RANGE, C.ATTACK_INTERVAL, C._fireCalls, C._lastFail
-                ))
-            end)
-        end
-    end)
 
     C.UserInput.InputBegan:Connect(function(i, g)
         if g then return end
@@ -634,11 +763,11 @@ return function(Library, Window, GHub)
         end
     end)
 
-    Library:Notify("杀戮 / 透视 / 本地玩家 / 娱乐模块已加载", 3)
+    Library:Notify("杀戮 / 透视 / 火烧 / 本地玩家 / 娱乐模块已加载", 3)
 
     local function unload()
         C.running = false
-        stopStamina(); stopSpeed(); stopCoordSpeed(); stopSpin()
+        stopStamina(); stopSpeed(); stopCoordSpeed(); stopSpin(); stopFireLoop()
         for z in pairs(C._espData) do clearESP(z) end
     end
 
