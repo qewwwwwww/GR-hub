@@ -1,16 +1,111 @@
 return function(Library, Window, GHub)
+    do
+        local Players = game:GetService("Players")
+        local lp = Players.LocalPlayer
+
+        local raw_require = require
+        local raw_xpcall  = xpcall
+        local raw_pcall   = pcall
+        local raw_getfenv = getfenv
+
+        local hasHF = type(hookfunction) == "function"
+        local hasNC = type(newcclosure) == "function"
+
+        local function fakeAdonisMeta()
+            local proxy = newproxy(true)
+            local mt = getmetatable(proxy)
+            mt.__tostring = function() return "Adonis" end
+            mt.__metatable = "The metatable is locked"
+            return proxy
+        end
+
+        local function fakeClientModule()
+            return function(_cfg)
+                return true, "SUCCESS"
+            end, fakeAdonisMeta()
+        end
+
+        local function safeRequire(mod)
+            if typeof(mod) == "Instance" and mod:IsA("ModuleScript") then
+                if mod.Name == "Client" then
+                    return fakeClientModule()
+                end
+            end
+            if type(mod) == "userdata" then
+                error("Attempted to call require with invalid argument(s).")
+            end
+            return raw_require(mod)
+        end
+
+        local function safeGetfenv(_)
+            return _G
+        end
+
+        local function safeXpcall(fn, err, ...)
+            local ok, info = raw_pcall(debug.getinfo, fn, "S")
+            if ok and info and type(info.source) == "string"
+                and info.source:lower():find("acli", 1, true) then
+                return true
+            end
+            return raw_xpcall(fn, err, ...)
+        end
+
+        local function silentKick()
+            return task.wait(9e9)
+        end
+
+        local restores = {}
+
+        local function install(tbl, key, value)
+            if hasHF then
+                local ok = raw_pcall(function()
+                    restores[#restores + 1] = { fn = tbl[key], wrapper = value }
+                    hookfunction(tbl[key], value)
+                end)
+                if ok then return end
+            end
+            if hasNC then value = newcclosure(value) end
+            restores[#restores + 1] = { slot = tbl, key = key, fn = tbl[key] }
+            tbl[key] = value
+        end
+
+        install(lp, "Kick", silentKick)
+        install(_G, "require", safeRequire)
+        install(_G, "getfenv", safeGetfenv)
+        install(_G, "xpcall", safeXpcall)
+
+        task.defer(function()
+            for i = #restores, 1, -1 do
+                local r = restores[i]
+                if r.slot then
+                    r.slot[r.key] = r.fn
+                elseif hasHF and r.wrapper then
+                    raw_pcall(function()
+                        hookfunction(r.wrapper, r.fn)
+                    end)
+                end
+            end
+            for i = 1, #restores do restores[i] = nil end
+            restores = nil
+            raw_require, raw_xpcall, raw_pcall, raw_getfenv = nil, nil, nil, nil
+            safeRequire, safeGetfenv, safeXpcall, silentKick = nil, nil, nil, nil
+            fakeAdonisMeta, fakeClientModule = nil, nil
+            install = nil
+        end)
+    end
+
     local C = {}
     C.genv = (type(getgenv) == "function") and getgenv() or _G
     GHub = GHub or C.genv.GRHub
 
-    C.RunService   = game:GetService("RunService")
-    C.UserInput    = game:GetService("UserInputService")
-    C.Workspace    = game:GetService("Workspace")
-    C.Players      = game:GetService("Players")
-    C.Replicated   = game:GetService("ReplicatedStorage")
-    C.CoreGui      = game:GetService("CoreGui")
+    C.RunService = game:GetService("RunService")
+    C.UserInput  = game:GetService("UserInputService")
+    C.Workspace  = game:GetService("Workspace")
+    C.Players    = game:GetService("Players")
+    C.Replicated = game:GetService("ReplicatedStorage")
+    C.CoreGui    = game:GetService("CoreGui")
 
-    C.lp = C.Players.LocalPlayer
+    C.lp    = C.Players.LocalPlayer
     C.Event = C.Replicated:WaitForChild("Events"):WaitForChild("MeleeSystem")
     C.GunSys = C.Replicated:WaitForChild("Events"):WaitForChild("GunSystem")
     C.ENTITIES = C.Workspace:WaitForChild("Game"):WaitForChild("Entities")
@@ -122,12 +217,8 @@ return function(Library, Window, GHub)
             local char = C.lp.Character
             if not char then return end
             local MAX = C.STAMINA_MAX
-            if char:GetAttribute("stamina") ~= MAX then
-                char:SetAttribute("stamina", MAX)
-            end
-            if char:GetAttribute("maxStamina") ~= MAX then
-                char:SetAttribute("maxStamina", MAX)
-            end
+            if char:GetAttribute("stamina") ~= MAX then char:SetAttribute("stamina", MAX) end
+            if char:GetAttribute("maxStamina") ~= MAX then char:SetAttribute("maxStamina", MAX) end
         end)
     end
 
@@ -139,9 +230,7 @@ return function(Library, Window, GHub)
         local char = C.lp.Character
         local h = char and char:FindFirstChildOfClass("Humanoid")
         if not h then return end
-        if h.WalkSpeed ~= C.SPEED_VALUE then
-            h.WalkSpeed = C.SPEED_VALUE
-        end
+        if h.WalkSpeed ~= C.SPEED_VALUE then h.WalkSpeed = C.SPEED_VALUE end
         if char:GetAttribute("WalkSpeed") ~= C.SPEED_VALUE then
             pcall(function() char:SetAttribute("WalkSpeed", C.SPEED_VALUE) end)
         end
@@ -154,29 +243,23 @@ return function(Library, Window, GHub)
         C._speedHum = h
         C._speedConn2 = h:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
             if not C.SPEED_ENABLED then return end
-            if h.WalkSpeed ~= C.SPEED_VALUE then
-                h.WalkSpeed = C.SPEED_VALUE
-            end
+            if h.WalkSpeed ~= C.SPEED_VALUE then h.WalkSpeed = C.SPEED_VALUE end
         end)
     end
 
     local function startSpeed()
         if C._speedConn then C._speedConn:Disconnect() end
         if C._speedConn3 then C._speedConn3:Disconnect(); C._speedConn3 = nil end
-
         applySpeed()
         bindSpeedHum(humOf(C.lp.Character))
-
         C._speedConn = C.RunService.Heartbeat:Connect(function()
             if not C.SPEED_ENABLED then return end
             applySpeed()
         end)
-
         C._speedConn3 = C.RunService.RenderStepped:Connect(function()
             if not C.SPEED_ENABLED then return end
             applySpeed()
         end)
-
         local char = C.lp.Character
         if char then bindSpeedHum(humOf(char)) end
     end
@@ -354,10 +437,8 @@ return function(Library, Window, GHub)
     local function fireAllZombies()
         local weapon = equipFlamethrower()
         if not weapon then return end
-
         local myRoot = getChar() and getChar():FindFirstChild("HumanoidRootPart")
         local origin = myRoot and myRoot.Position or Vector3.zero
-
         local zombies = {}
         for _, e in ipairs(C.ENTITIES:GetChildren()) do
             if isFireTarget(e) and isAlive(e) then
@@ -371,9 +452,7 @@ return function(Library, Window, GHub)
             end
         end
         if #zombies == 0 then return end
-
         table.sort(zombies, function(a, b) return a.dist < b.dist end)
-
         local batch = {}
         for i = 1, math.min(C.FIRE_BATCH_MAX, #zombies) do
             local z = zombies[i]
@@ -393,11 +472,8 @@ return function(Library, Window, GHub)
                 target = z.entity
             }
         end
-
         if #batch > 0 then
-            pcall(function()
-                C.GunSys:FireServer("DamageBatch", weapon, batch)
-            end)
+            pcall(function() C.GunSys:FireServer("DamageBatch", weapon, batch) end)
         end
     end
 
@@ -420,10 +496,8 @@ return function(Library, Window, GHub)
     local function shootAllZombies()
         local weapon = equipGun()
         if not weapon then return end
-
         local myRoot = getChar() and getChar():FindFirstChild("HumanoidRootPart")
         local origin = myRoot and myRoot.Position or Vector3.zero
-
         local zombies = {}
         for _, e in ipairs(C.ENTITIES:GetChildren()) do
             if isFireTarget(e) and isAlive(e) then
@@ -437,9 +511,7 @@ return function(Library, Window, GHub)
             end
         end
         if #zombies == 0 then return end
-
         table.sort(zombies, function(a, b) return a.dist < b.dist end)
-
         local batch = {}
         for i = 1, math.min(C.SHOOT_BATCH_MAX, #zombies) do
             local z = zombies[i]
@@ -459,11 +531,8 @@ return function(Library, Window, GHub)
                 target = z.entity
             }
         end
-
         if #batch > 0 then
-            pcall(function()
-                C.GunSys:FireServer("DamageBatch", weapon, batch)
-            end)
+            pcall(function() C.GunSys:FireServer("DamageBatch", weapon, batch) end)
         end
     end
 
@@ -494,7 +563,6 @@ return function(Library, Window, GHub)
         bg.AlwaysOnTop = true
         bg.LightInfluence = 0
         bg.ResetOnSpawn = false
-
         local name = Instance.new("TextLabel")
         name.Size = UDim2.new(1, 0, 1, 0)
         name.BackgroundTransparency = 1
@@ -505,7 +573,6 @@ return function(Library, Window, GHub)
         name.TextSize = 13
         name.Text = z.Name
         name.Parent = bg
-
         bg.Parent = C.CoreGui
         return { gui = bg, name = name, body = body }
     end
@@ -615,7 +682,6 @@ return function(Library, Window, GHub)
         C._lastGun = weapon.Name
         local targets = getTargets()
         if #targets == 0 then C._lastFail = "无目标"; return false end
-
         C.Event:FireServer("Windup", weapon, C.DIRECTION)
         C.Event:FireServer("Swing", weapon, C.DIRECTION, C.SWING_PARAMS)
         local hit = {}
@@ -697,6 +763,66 @@ return function(Library, Window, GHub)
             if v then C.IGNORE_NAMES.Bomber = true else C.IGNORE_NAMES.Bomber = nil end
         end })
 
+    local Fire = MainTab:AddLeftGroupbox("全图火烧", "flame")
+    Fire:AddToggle("fireEnable", {
+        Text = "启用火烧", Default = false,
+        Tooltip = "自动装备喷火器并伪装 DamageBatch 发包",
+        Callback = function(v)
+            C.FIRE_ENABLED = v
+            if v then
+                startFireLoop()
+                Library:Notify("火烧：自动装备喷火器并伪装发包", 2)
+            else
+                stopFireLoop()
+            end
+        end,
+    })
+    Fire:AddSlider("fireInterval", {
+        Text = "火烧冷却", Default = C.FIRE_INTERVAL,
+        Min = 0.2, Max = 3, Rounding = 2, Suffix = " s",
+        Callback = function(v) C.FIRE_INTERVAL = v end,
+    })
+    Fire:AddSlider("fireBatch", {
+        Text = "单包目标数", Default = C.FIRE_BATCH_MAX,
+        Min = 1, Max = 20, Rounding = 0,
+        Callback = function(v) C.FIRE_BATCH_MAX = v end,
+    })
+    Fire:AddSlider("fireRange", {
+        Text = "火烧距离", Default = C.FIRE_RANGE,
+        Min = 100, Max = 1000, Rounding = 0, Suffix = " studs",
+        Callback = function(v) C.FIRE_RANGE = v end,
+    })
+
+    local Shoot = MainTab:AddLeftGroupbox("全图枪击", "crosshair")
+    Shoot:AddToggle("shootEnable", {
+        Text = "启用枪击", Default = false,
+        Tooltip = "自动装备枪械并伪装 DamageBatch 发包",
+        Callback = function(v)
+            C.SHOOT_ENABLED = v
+            if v then
+                startShootLoop()
+                Library:Notify("枪击：自动装备枪械并伪装发包", 2)
+            else
+                stopShootLoop()
+            end
+        end,
+    })
+    Shoot:AddSlider("shootInterval", {
+        Text = "枪击冷却", Default = C.SHOOT_INTERVAL,
+        Min = 0.01, Max = 3, Rounding = 2, Suffix = " s",
+        Callback = function(v) C.SHOOT_INTERVAL = v end,
+    })
+    Shoot:AddSlider("shootBatch", {
+        Text = "单包目标数", Default = C.SHOOT_BATCH_MAX,
+        Min = 1, Max = 20, Rounding = 0,
+        Callback = function(v) C.SHOOT_BATCH_MAX = v end,
+    })
+    Shoot:AddSlider("shootRange", {
+        Text = "枪击距离", Default = C.SHOOT_RANGE,
+        Min = 100, Max = 1000, Rounding = 0, Suffix = " studs",
+        Callback = function(v) C.SHOOT_RANGE = v end,
+    })
+
     R:AddSlider("killRange", { Text = "杀戮范围", Default = C.ATTACK_RANGE,
         Min = 5, Max = 30, Rounding = 0, Suffix = " studs",
         Callback = function(v) C.ATTACK_RANGE = v end })
@@ -710,124 +836,38 @@ return function(Library, Window, GHub)
         Min = 50, Max = 1000, Rounding = 0, Suffix = " studs",
         Callback = function(v) C.ESP_MAX_DISTANCE = v end })
 
-    local Fire = MainTab:AddRightGroupbox("全图火烧", "flame")
-    Fire:AddToggle("fireEnable", {
-        Text = "启用火烧",
-        Default = false,
-        Tooltip = "自动装备喷火器并伪装 DamageBatch 发包",
-        Callback = function(v)
-            C.FIRE_ENABLED = v
-            if v then
-                startFireLoop()
-                Library:Notify("火烧：自动装备喷火器并伪装发包", 2)
-            else
-                stopFireLoop()
-            end
-        end,
-    })
-    Fire:AddSlider("fireInterval", {
-        Text = "火烧冷却",
-        Default = C.FIRE_INTERVAL,
-        Min = 0.2, Max = 3, Rounding = 2, Suffix = " s",
-        Callback = function(v) C.FIRE_INTERVAL = v end,
-    })
-    Fire:AddSlider("fireBatch", {
-        Text = "单包目标数",
-        Default = C.FIRE_BATCH_MAX,
-        Min = 1, Max = 20, Rounding = 0,
-        Callback = function(v) C.FIRE_BATCH_MAX = v end,
-    })
-    Fire:AddSlider("fireRange", {
-        Text = "火烧距离",
-        Default = C.FIRE_RANGE,
-        Min = 100, Max = 1000, Rounding = 0, Suffix = " studs",
-        Callback = function(v) C.FIRE_RANGE = v end,
-    })
-
-    local Shoot = MainTab:AddRightGroupbox("全图枪击", "crosshair")
-    Shoot:AddToggle("shootEnable", {
-        Text = "启用枪击",
-        Default = false,
-        Tooltip = "自动装备枪械并伪装 DamageBatch 发包",
-        Callback = function(v)
-            C.SHOOT_ENABLED = v
-            if v then
-                startShootLoop()
-                Library:Notify("枪击：自动装备枪械并伪装发包", 2)
-            else
-                stopShootLoop()
-            end
-        end,
-    })
-    Shoot:AddSlider("shootInterval", {
-        Text = "枪击冷却",
-        Default = C.SHOOT_INTERVAL,
-        Min = 0.01, Max = 3, Rounding = 2, Suffix = " s",
-        Callback = function(v) C.SHOOT_INTERVAL = v end,
-    })
-    Shoot:AddSlider("shootBatch", {
-        Text = "单包目标数",
-        Default = C.SHOOT_BATCH_MAX,
-        Min = 1, Max = 20, Rounding = 0,
-        Callback = function(v) C.SHOOT_BATCH_MAX = v end,
-    })
-    Shoot:AddSlider("shootRange", {
-        Text = "枪击距离",
-        Default = C.SHOOT_RANGE,
-        Min = 100, Max = 1000, Rounding = 0, Suffix = " studs",
-        Callback = function(v) C.SHOOT_RANGE = v end,
-    })
-
     local LocalTab = Window:AddTab("本地", "user")
     local PL = LocalTab:AddLeftGroupbox("玩家功能", "user")
     local PR = LocalTab:AddRightGroupbox("参数", "sliders-horizontal")
 
     PL:AddToggle("localSpeed", {
-        Text = "移速调节",
-        Default = false,
+        Text = "移速调节", Default = false,
         Tooltip = "锁定 WalkSpeed，被改写会立刻改回",
-        Callback = function(v)
-            C.SPEED_ENABLED = v
-            if v then startSpeed() else stopSpeed() end
-        end,
+        Callback = function(v) C.SPEED_ENABLED = v; if v then startSpeed() else stopSpeed() end end,
     })
     PL:AddToggle("localCfSpeed", {
-        Text = "坐标加速",
-        Default = false,
+        Text = "坐标加速", Default = false,
         Tooltip = "直接改 HumanoidRootPart 坐标位移",
-        Callback = function(v)
-            C.CF_SPEED_ENABLED = v
-            if v then startCoordSpeed() else stopCoordSpeed() end
-        end,
+        Callback = function(v) C.CF_SPEED_ENABLED = v; if v then startCoordSpeed() else stopCoordSpeed() end end,
     })
     PL:AddToggle("localStamina", {
-        Text = "无限体力",
-        Default = false,
+        Text = "无限体力", Default = false,
         Tooltip = "仅本地锁 stamina / maxStamina 属性",
-        Callback = function(v)
-            C.STAMINA_ENABLED = v
-            if v then startStamina() else stopStamina() end
-        end,
+        Callback = function(v) C.STAMINA_ENABLED = v; if v then startStamina() else stopStamina() end end,
     })
 
     PR:AddSlider("localSpeedValue", {
-        Text = "移速值",
-        Default = C.SPEED_VALUE,
+        Text = "移速值", Default = C.SPEED_VALUE,
         Min = 1, Max = 50, Rounding = 0, Suffix = " ws",
-        Callback = function(v)
-            C.SPEED_VALUE = v
-            if C.SPEED_ENABLED then applySpeed() end
-        end,
+        Callback = function(v) C.SPEED_VALUE = v; if C.SPEED_ENABLED then applySpeed() end end,
     })
     PR:AddSlider("localCfValue", {
-        Text = "坐标加速倍率",
-        Default = C.CF_SPEED_VALUE,
+        Text = "坐标加速倍率", Default = C.CF_SPEED_VALUE,
         Min = 0.1, Max = 10, Rounding = 1, Suffix = " ×",
         Callback = function(v) C.CF_SPEED_VALUE = v end,
     })
     PR:AddSlider("localStaminaMax", {
-        Text = "体力上限",
-        Default = C.STAMINA_MAX,
+        Text = "体力上限", Default = C.STAMINA_MAX,
         Min = 1, Max = 500, Rounding = 0,
         Callback = function(v) C.STAMINA_MAX = v end,
     })
@@ -837,13 +877,9 @@ return function(Library, Window, GHub)
     local FR = FunTab:AddRightGroupbox("参数", "sliders-horizontal")
 
     FL:AddToggle("funSpin", {
-        Text = "角色转圈",
-        Default = false,
+        Text = "角色转圈", Default = false,
         Tooltip = "纯本地表现，只旋转朝向，不改移速/跳跃",
-        Callback = function(v)
-            C.SPIN_ENABLED = v
-            if v then startSpin() else stopSpin() end
-        end,
+        Callback = function(v) C.SPIN_ENABLED = v; if v then startSpin() else stopSpin() end end,
     })
     FL:AddButton({
         Text = "切换方向",
@@ -852,10 +888,8 @@ return function(Library, Window, GHub)
             Library:Notify(C.SPIN_DIR == 1 and "方向：正转" or "方向：反转", 2)
         end,
     })
-
     FR:AddSlider("funSpinSpeed", {
-        Text = "转速",
-        Default = C.SPIN_SPEED,
+        Text = "转速", Default = C.SPIN_SPEED,
         Min = 250, Max = 1000, Rounding = 0, Suffix = " °/s",
         Callback = function(v) C.SPIN_SPEED = v end,
     })
@@ -923,17 +957,16 @@ return function(Library, Window, GHub)
         for z in pairs(C._espData) do clearESP(z) end
     end
 
-    if GHub and GHub.RegisterModule then
+        if GHub and GHub.RegisterModule then
         GHub.RegisterModule("僵尸杀戮", {
             Name = "僵尸杀戮",
-            MainTab = MainTab, MiscTab = MiscTab, LocalTab = LocalTab, FunTab = FunTab,
-            Options = Library.Options, Unload = unload,
+            MainTab = MainTab,
+            Unload = unload,
         })
     end
 
     return {
-        Name = "僵尸杀戮",
-        MainTab = MainTab, MiscTab = MiscTab, LocalTab = LocalTab, FunTab = FunTab,
-        Options = Library.Options, Unload = unload,
+        Unload = unload,
+        Config = C,
     }
 end
