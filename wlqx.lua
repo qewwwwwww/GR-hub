@@ -1,97 +1,25 @@
 return function(Library, Window, GHub)
+    local Players = game:GetService("Players")
+    local lp = Players.LocalPlayer
+
+    task.wait(3)
+
     do
-        local Players = game:GetService("Players")
-        local lp = Players.LocalPlayer
-
-        local raw_require = require
-        local raw_xpcall  = xpcall
-        local raw_pcall   = pcall
-        local raw_getfenv = getfenv
-
-        local hasHF = type(hookfunction) == "function"
-        local hasNC = type(newcclosure) == "function"
-
-        local function fakeAdonisMeta()
-            local proxy = newproxy(true)
-            local mt = getmetatable(proxy)
-            mt.__tostring = function() return "Adonis" end
-            mt.__metatable = "The metatable is locked"
-            return proxy
-        end
-
-        local function fakeClientModule()
-            return function(_cfg)
-                return true, "SUCCESS"
-            end, fakeAdonisMeta()
-        end
-
-        local function safeRequire(mod)
-            if typeof(mod) == "Instance" and mod:IsA("ModuleScript") then
-                if mod.Name == "Client" then
-                    return fakeClientModule()
-                end
-            end
-            if type(mod) == "userdata" then
-                error("Attempted to call require with invalid argument(s).")
-            end
-            return raw_require(mod)
-        end
-
-        local function safeGetfenv(_)
-            return _G
-        end
-
-        local function safeXpcall(fn, err, ...)
-            local ok, info = raw_pcall(debug.getinfo, fn, "S")
-            if ok and info and type(info.source) == "string"
-                and info.source:lower():find("acli", 1, true) then
-                return true
-            end
-            return raw_xpcall(fn, err, ...)
-        end
-
-        local function silentKick()
-            return task.wait(9e9)
-        end
-
-        local restores = {}
-
-        local function install(tbl, key, value)
-            if hasHF then
-                local ok = raw_pcall(function()
-                    restores[#restores + 1] = { fn = tbl[key], wrapper = value }
-                    hookfunction(tbl[key], value)
-                end)
-                if ok then return end
-            end
-            if hasNC then value = newcclosure(value) end
-            restores[#restores + 1] = { slot = tbl, key = key, fn = tbl[key] }
-            tbl[key] = value
-        end
-
-        install(lp, "Kick", silentKick)
-        install(_G, "require", safeRequire)
-        install(_G, "getfenv", safeGetfenv)
-        install(_G, "xpcall", safeXpcall)
-
-        task.defer(function()
-            for i = #restores, 1, -1 do
-                local r = restores[i]
-                if r.slot then
-                    r.slot[r.key] = r.fn
-                elseif hasHF and r.wrapper then
-                    raw_pcall(function()
-                        hookfunction(r.wrapper, r.fn)
+        local ok, mt = pcall(getrawmetatable, lp)
+        if ok and mt and type(hookmetamethod) == "function" then
+            local oldNamecall = mt.__namecall
+            if oldNamecall then
+                pcall(function()
+                    hookmetamethod(lp, "__namecall", function(self, ...)
+                        local method = getnamecallmethod()
+                        if self == lp and method == "Kick" then
+                            return task.wait(9e9)
+                        end
+                        return oldNamecall(self, ...)
                     end)
-                end
+                end)
             end
-            for i = 1, #restores do restores[i] = nil end
-            restores = nil
-            raw_require, raw_xpcall, raw_pcall, raw_getfenv = nil, nil, nil, nil
-            safeRequire, safeGetfenv, safeXpcall, silentKick = nil, nil, nil, nil
-            fakeAdonisMeta, fakeClientModule = nil, nil
-            install = nil
-        end)
+        end
     end
 
     local C = {}
@@ -709,7 +637,7 @@ return function(Library, Window, GHub)
 
     task.spawn(function()
         while true do
-            task.wait(0.2)
+            task.wait(0.3)
             if C.ESP_ENABLED and not C.isDead then pcall(refreshESP) end
         end
     end)
@@ -957,7 +885,7 @@ return function(Library, Window, GHub)
         for z in pairs(C._espData) do clearESP(z) end
     end
 
-        if GHub and GHub.RegisterModule then
+    if GHub and GHub.RegisterModule then
         GHub.RegisterModule("僵尸杀戮", {
             Name = "僵尸杀戮",
             MainTab = MainTab,
