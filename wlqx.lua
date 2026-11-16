@@ -307,17 +307,10 @@ return function(Library, Window, GHub)
         return tool
     end
 
-    local GUN_EXCLUDE = { Flamethrower = true }
-
     local function isGunTool(t)
         if not t or not t:IsA("Tool") then return false end
-        if GUN_EXCLUDE[t.Name] then return false end
-        if t:FindFirstChild("Animations") and t.Animations:FindFirstChild("SwingUpEnd") then
-            return false
-        end
-        if t:FindFirstChild("Grip") == nil and t:FindFirstChild("Handle") == nil then
-            return false
-        end
+        local values = t:FindFirstChild("Values")
+        if not values or not values:FindFirstChild("Ammo") then return false end
         return true
     end
 
