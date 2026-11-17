@@ -1,72 +1,17 @@
-local Players = game:GetService("Players")
-local lp = Players.LocalPlayer
-
-do
-    local ok, hookmetamethod = pcall(function() return hookmetamethod end)
-    if ok and hookmetamethod then
-        local oldNamecall
-        oldNamecall = hookmetamethod(lp, "__namecall", function(self, ...)
-            local method = getnamecallmethod()
-            if self == lp and (method == "Kick" or method == "kick") then
-                return nil
-            end
-            return oldNamecall(self, ...)
-        end)
-    end
-    pcall(function()
-        lp.Kick = function() return nil end
-    end)
+local lp = game:GetService("Players").LocalPlayer
+local oldKick = lp.Kick
+lp.Kick = function(self, ...)
+    return
 end
+getgenv().Kick = function(...) return end
 
-do
-    local oldGetfenv = getfenv
-    local function cleanEnv(e)
-        if type(e) == "table" then
-            e.getgenv = nil
-            e.syn = nil
-            e.krnl = nil
-            e.fluxus = nil
-            e.scriptware = nil
-            e.sirius = nil
-        end
-        return e
+local oldGF = getfenv
+getgenv().getfenv = function(lvl)
+    local ok, e = pcall(oldGF, lvl)
+    if ok and type(e) == "table" then
+        e.getgenv = nil e.syn = nil e.krnl = nil e.fluxus = nil
     end
-    getgenv().getfenv = function(level)
-        if type(level) == "number" then
-            local ok, env = pcall(oldGetfenv, level)
-            if ok then return cleanEnv(env) end
-            return env
-        end
-        return oldGetfenv(level)
-    end
-end
-
-do
-    local ok, hookfunction = pcall(function() return hookfunction end)
-    if ok and hookfunction then
-        pcall(function()
-            local oldGetinfo = debug.getinfo
-            debug.getinfo = hookfunction(oldGetinfo, function(func, what)
-                local info = oldGetinfo(func, what)
-                if type(info) == "table" then
-                    info.nups = 0
-                end
-                return info
-            end)
-        end)
-    end
-end
-
-do
-    local ok, oldRequire = pcall(function() return require end)
-    if ok and oldRequire then
-        getgenv().require = function(t)
-            if t == game then
-                error("Attempted to call require with invalid argument(s).", 2)
-            end
-            return oldRequire(t)
-        end
-    end
+    return e
 end
 
 return function(Library, Window, GHub)
@@ -906,7 +851,7 @@ return function(Library, Window, GHub)
             Library:Notify("已尝试断开反作弊/体力相关连接", 3)
         end,
     })
-        MR:AddButton({
+    MR:AddButton({
         Text = "恢复默认",
         Func = function()
             local O = Library.Options
