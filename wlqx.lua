@@ -1,3 +1,74 @@
+local Players = game:GetService("Players")
+local lp = Players.LocalPlayer
+
+do
+    local ok, hookmetamethod = pcall(function() return hookmetamethod end)
+    if ok and hookmetamethod then
+        local oldNamecall
+        oldNamecall = hookmetamethod(lp, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if self == lp and (method == "Kick" or method == "kick") then
+                return nil
+            end
+            return oldNamecall(self, ...)
+        end)
+    end
+    pcall(function()
+        lp.Kick = function() return nil end
+    end)
+end
+
+do
+    local oldGetfenv = getfenv
+    local function cleanEnv(e)
+        if type(e) == "table" then
+            e.getgenv = nil
+            e.syn = nil
+            e.krnl = nil
+            e.fluxus = nil
+            e.scriptware = nil
+            e.sirius = nil
+        end
+        return e
+    end
+    getgenv().getfenv = function(level)
+        if type(level) == "number" then
+            local ok, env = pcall(oldGetfenv, level)
+            if ok then return cleanEnv(env) end
+            return env
+        end
+        return oldGetfenv(level)
+    end
+end
+
+do
+    local ok, hookfunction = pcall(function() return hookfunction end)
+    if ok and hookfunction then
+        pcall(function()
+            local oldGetinfo = debug.getinfo
+            debug.getinfo = hookfunction(oldGetinfo, function(func, what)
+                local info = oldGetinfo(func, what)
+                if type(info) == "table" then
+                    info.nups = 0
+                end
+                return info
+            end)
+        end)
+    end
+end
+
+do
+    local ok, oldRequire = pcall(function() return require end)
+    if ok and oldRequire then
+        getgenv().require = function(t)
+            if t == game then
+                error("Attempted to call require with invalid argument(s).", 2)
+            end
+            return oldRequire(t)
+        end
+    end
+end
+
 return function(Library, Window, GHub)
     local Players = game:GetService("Players")
     local lp = Players.LocalPlayer
@@ -52,7 +123,6 @@ return function(Library, Window, GHub)
     C._shootLast      = 0
     C._shootTool      = nil
 
-    -- ===== 体力（改动区）=====
     C.STAMINA_ENABLED = false
     C.STAMINA_MAX     = 100
     C.STAMINA_MIN     = 10
@@ -61,7 +131,8 @@ return function(Library, Window, GHub)
     C._stamPhase      = 0
     C._stamFreq       = 0.8
     C._stamNoise      = 6
-    -- ========================
+    C._stamWriteInterval = 0.07
+    C._stamWriteLast  = 0
 
     C.SPEED_ENABLED   = false
     C.SPEED_VALUE     = 16
@@ -205,31 +276,35 @@ return function(Library, Window, GHub)
         pcall(function() disableScriptsIn(C.CoreGui, 0) end)
     end
 
-    -- ===== 体力（改动区）=====
     local function startStamina()
         if C._staminaConn then C._staminaConn:Disconnect(); C._staminaConn = nil end
         C._stamT = 0
         C._stamPhase = math.random() * 10
+        C._stamWriteLast = 0
         C._staminaConn = track(C.RunService.Heartbeat:Connect(function(dt)
             local char = C.lp.Character
             if not char then return end
+
+            C._stamT = C._stamT + dt
+            C._stamWriteLast = C._stamWriteLast + dt
+            if C._stamWriteLast < C._stamWriteInterval then return end
+            C._stamWriteLast = 0
+
             local MAX = C.STAMINA_MAX
             local MIN = math.min(C.STAMINA_MIN, MAX)
 
-            C._stamT = C._stamT + dt
             local wave = (math.sin((C._stamT * C._stamFreq + C._stamPhase) * math.pi) + 1) / 2
             local noise = (math.random() - 0.5) * C._stamNoise
             local val = MIN + (MAX - MIN) * wave + noise
             val = math.clamp(val, MIN, MAX)
 
-            char:SetAttribute("stamina", val)
-            char:SetAttribute("maxStamina", MAX)
+            pcall(function() char:SetAttribute("stamina", val) end)
+            pcall(function() char:SetAttribute("maxStamina", MAX) end)
         end))
     end
     local function stopStamina()
         if C._staminaConn then C._staminaConn:Disconnect(); C._staminaConn = nil end
     end
-    -- ========================
 
     local function applySpeed()
         local char = C.lp.Character
@@ -831,7 +906,7 @@ return function(Library, Window, GHub)
             Library:Notify("已尝试断开反作弊/体力相关连接", 3)
         end,
     })
-    MR:AddButton({
+        MR:AddButton({
         Text = "恢复默认",
         Func = function()
             local O = Library.Options
@@ -857,49 +932,7 @@ return function(Library, Window, GHub)
             if O.localStaminaFreq then O.localStaminaFreq:SetValue(0.8) end
             if O.funSpin          then O.funSpin:SetValue(false) end
             if O.funSpinSpeed     then O.funSpinSpeed:SetValue(250) end
-            Library:Notify("已恢复默认", 3)
+            Library:Notify("已恢复默认设置", 3)
         end,
     })
-
-    C.UserInput.InputBegan:Connect(function(i, g)
-        if g then return end
-        if i.KeyCode == Enum.KeyCode.P then
-            C.running = not C.running
-            if Library.Options.killFire then Library.Options.killFire:SetValue(C.running) end
-        elseif i.KeyCode == Enum.KeyCode.L then
-            C.ESP_ENABLED = not C.ESP_ENABLED
-            if Library.Options.killEsp then Library.Options.killEsp:SetValue(C.ESP_ENABLED) end
-        elseif i.KeyCode == Enum.KeyCode.K then
-            C.STAMINA_ENABLED = not C.STAMINA_ENABLED
-            if Library.Options.localStamina then
-                Library.Options.localStamina:SetValue(C.STAMINA_ENABLED)
-            end
-        end
-    end)
-
-    pcall(killAntiCheat)
-    Library:Notify("杀戮 / 透视 / 全图枪击 / 本地玩家 / 娱乐模块已加载（已尝试断开反作弊/体力连接）", 3)
-
-    local function unload()
-        C.running = false
-        stopStamina(); stopSpeed(); stopCoordSpeed(); stopSpin(); stopShootLoop()
-        for z in pairs(C._espData) do clearESP(z) end
-        for _, conn in ipairs(C._allConns) do
-            pcall(function() conn:Disconnect() end)
-        end
-        C._allConns = {}
-    end
-
-    if GHub and GHub.RegisterModule then
-        GHub.RegisterModule("僵尸杀戮", {
-            Name = "僵尸杀戮",
-            MainTab = MainTab,
-            Unload = unload,
-        })
-    end
-
-    return {
-        Unload = unload,
-        Config = C,
-    }
 end
