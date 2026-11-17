@@ -113,6 +113,16 @@ return function(Library, Window, GHub)
     C._origAutoRotate = true
     C._spinConn       = nil
 
+    C.FLY_ENABLED     = false
+    C.FLY_SPEED       = 40
+    C._flyConn        = nil
+    C._flyBV          = nil
+    C._flyBG          = nil
+    C._flyOrigGrav    = C.Workspace.Gravity
+    C._flyOrigPlatform = false
+    C._flyOrigAutoRotate = true
+    C._flyControls    = nil
+
     C._fireCalls = 0
     C._lastFail  = "未启动"
     C._lastGun   = "无"
@@ -381,6 +391,118 @@ return function(Library, Window, GHub)
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         pcall(function() if hum then hum.AutoRotate = C._origAutoRotate end end)
         pcall(function() if hrp then hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0) end end)
+    end
+
+    local function flyRoot()
+        local char = C.lp.Character
+        if not char then return nil end
+        return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    end
+    local function flyHum()
+        local char = C.lp.Character
+        return char and char:FindFirstChildOfClass("Humanoid")
+    end
+    local function killSpeedWatchFly()
+        local h = flyHum()
+        if not h or type(getconnections) ~= "function" then return end
+        local okc, conns = pcall(getconnections, h:GetPropertyChangedSignal("WalkSpeed"))
+        if okc and type(conns) == "table" then
+            for _, c in ipairs(conns) do
+                pcall(function()
+                    local f = c.Function
+                    if f and string.find(string.lower(tostring(f)), "speed", 1, true) then
+                        c:Disconnect()
+                    end
+                end)
+            end
+        end
+    end
+    local function startFly()
+        if C.FLY_ENABLED then return end
+        local hrp = flyRoot()
+        local hum = flyHum()
+        if not hrp or not hum then return end
+
+        C.FLY_ENABLED = true
+        C._flyOrigPlatform = hum.PlatformStand
+        C._flyOrigAutoRotate = hum.AutoRotate
+        C._flyOrigGrav = C.Workspace.Gravity
+
+        pcall(killSpeedWatchFly)
+
+        hum.PlatformStand = true
+        hum.AutoRotate = false
+        pcall(function() C.Workspace.Gravity = 0 end)
+
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "FlyBV"
+        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bv.Velocity = Vector3.zero
+        bv.P = 10000
+        bv.Parent = hrp
+        C._flyBV = bv
+
+        local bg = Instance.new("BodyGyro")
+        bg.Name = "FlyBG"
+        bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+        bg.P = 10000
+        bg.D = 100
+        bg.CFrame = hrp.CFrame
+        bg.Parent = hrp
+        C._flyBG = bg
+
+        C._flyConn = track(C.RunService.Heartbeat:Connect(function()
+            local hrp2 = flyRoot()
+            local hum2 = flyHum()
+            if not hrp2 or not hum2 or hum2.Health <= 0 then return end
+
+            local cam = C.Workspace.CurrentCamera
+            if not cam then return end
+            local look = cam.CFrame.LookVector
+            local right = cam.CFrame.RightVector
+            local dir = Vector3.zero
+
+            if C._flyControls then
+                local okm, mv = pcall(function() return C._flyControls:GetMoveVector() end)
+                if okm and mv and mv.Magnitude > 0.05 then
+                    dir = dir + (look * -mv.Z) + (right * mv.X)
+                end
+            else
+                local md = hum2.MoveDirection
+                if md.Magnitude > 0.05 then dir = md.Unit end
+            end
+
+            if C.UserInput:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.yAxis end
+            if C.UserInput:IsKeyDown(Enum.KeyCode.LeftControl) then dir = dir - Vector3.yAxis end
+
+            if dir.Magnitude > 1e-6 then dir = dir.Unit end
+
+            C._flyBV.Velocity = dir * C.FLY_SPEED
+
+            local flat = Vector3.new(look.X, 0, look.Z)
+            if flat.Magnitude > 0.01 then
+                C._flyBG.CFrame = CFrame.new(hrp2.Position, hrp2.Position + flat.Unit)
+            end
+        end))
+    end
+    local function stopFly()
+        if not C.FLY_ENABLED then return end
+        C.FLY_ENABLED = false
+        if C._flyConn then C._flyConn:Disconnect(); C._flyConn = nil end
+        if C._flyBV then C._flyBV:Destroy(); C._flyBV = nil end
+        if C._flyBG then C._flyBG:Destroy(); C._flyBG = nil end
+
+        local hrp = flyRoot()
+        local hum = flyHum()
+        if hrp then
+            pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
+            pcall(function() hrp.Velocity = Vector3.zero end)
+        end
+        if hum then
+            pcall(function() hum.PlatformStand = C._flyOrigPlatform end)
+            pcall(function() hum.AutoRotate = C._flyOrigAutoRotate end)
+        end
+        pcall(function() C.Workspace.Gravity = C._flyOrigGrav end)
     end
 
     local function isMeleeTool(tool)
@@ -716,7 +838,16 @@ return function(Library, Window, GHub)
             bindSpeedHum(humOf(c))
             applySpeed()
         end
+        if C.FLY_ENABLED then
+            stopFly()
+            startFly()
+        end
     end))
+
+    pcall(function()
+        local PM = require(C.lp:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule"))
+        C._flyControls = PM:GetControls()
+    end)
 
     local MainTab = Window:AddTab("杀戮", "sword")
     local L = MainTab:AddLeftGroupbox("杀戮 / 透视", "power")
@@ -802,11 +933,30 @@ return function(Library, Window, GHub)
         Tooltip = "体力在最低值与上限之间起伏，避免恒定值特征",
         Callback = function(v) C.STAMINA_ENABLED = v; if v then startStamina() else stopStamina() end end,
     })
+    PL:AddToggle("localFly", {
+        Text = "飞行", Default = false,
+        Tooltip = "PlatformStand + BodyVelocity 驱动，WASD/摇杆移动，Space 上升 LeftCtrl 下降",
+        Callback = function(v)
+            if v then
+                startFly()
+                if not C.FLY_ENABLED then
+                    Library:Notify("飞行启动失败：角色未就绪", 3)
+                end
+            else
+                stopFly()
+            end
+        end,
+    })
 
-    PR:AddSlider("localSpeedValue", {
+        PR:AddSlider("localSpeedValue", {
         Text = "移速值", Default = C.SPEED_VALUE,
         Min = 1, Max = 50, Rounding = 0, Suffix = " ws",
         Callback = function(v) C.SPEED_VALUE = v; if C.SPEED_ENABLED then applySpeed() end end,
+    })
+    PR:AddSlider("localFlySpeed", {
+        Text = "飞行速度", Default = C.FLY_SPEED,
+        Min = 1, Max = 50, Rounding = 0, Suffix = " spd",
+        Callback = function(v) C.FLY_SPEED = v end,
     })
     PR:AddSlider("localCfValue", {
         Text = "坐标加速倍率", Default = C.CF_SPEED_VALUE,
@@ -884,7 +1034,9 @@ return function(Library, Window, GHub)
             if O.localSpeed       then O.localSpeed:SetValue(false) end
             if O.localCfSpeed     then O.localCfSpeed:SetValue(false) end
             if O.localStamina     then O.localStamina:SetValue(false) end
+            if O.localFly         then O.localFly:SetValue(false) end
             if O.localSpeedValue  then O.localSpeedValue:SetValue(16) end
+            if O.localFlySpeed    then O.localFlySpeed:SetValue(40) end
             if O.localCfValue     then O.localCfValue:SetValue(1.5) end
             if O.localStaminaMax  then O.localStaminaMax:SetValue(100) end
             if O.localStaminaMin  then O.localStaminaMin:SetValue(10) end
@@ -895,3 +1047,4 @@ return function(Library, Window, GHub)
         end,
     })
 end
+
