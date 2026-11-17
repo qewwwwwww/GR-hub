@@ -1,35 +1,37 @@
-local lp = game:GetService("Players").LocalPlayer
+local Players = game:GetService("Players")
+local lp = Players.LocalPlayer
 
-pcall(function()
-    lp.Kick = function() end
-    lp.kick = function() end
-end)
-pcall(function()
-    getgenv().Kick = function() end
-    getgenv().kick = function() end
-end)
+local function safeNoop() end
 
-local mt = getmetatable(lp)
-if mt and pcall(function() return mt.__index end) then
-    pcall(function()
-        mt.__index.Kick = function() end
-        mt.__index.kick = function() end
-    end)
+local ok, mt = pcall(getmetatable, lp)
+if ok and type(mt) == "table" then
+    local oldIndex = mt.__index
+    if type(oldIndex) == "function" then
+        mt.__index = function(self, key)
+            if key == "Kick" or key == "kick" then return safeNoop end
+            return oldIndex(self, key)
+        end
+    elseif type(oldIndex) == "table" then
+        pcall(function()
+            oldIndex.Kick = safeNoop
+            oldIndex.kick = safeNoop
+        end)
+    end
 end
+
+pcall(function() getgenv().Kick = safeNoop end)
+pcall(function() getgenv().kick = safeNoop end)
 
 local oldGF = getfenv
 getgenv().getfenv = function(lvl)
-    local ok, e = pcall(oldGF, lvl or 0)
-    if ok and type(e) == "table" then
+    local ok2, e = pcall(oldGF, lvl or 0)
+    if ok2 and type(e) == "table" then
         e.getgenv = nil e.syn = nil e.krnl = nil e.fluxus = nil
     end
     return e
 end
 
 return function(Library, Window, GHub)
-    local Players = game:GetService("Players")
-    local lp = Players.LocalPlayer
-
     local C = {}
     C.genv = (type(getgenv) == "function") and getgenv() or _G
     GHub = GHub or C.genv.GRHub
@@ -37,7 +39,7 @@ return function(Library, Window, GHub)
     C.RunService = game:GetService("RunService")
     C.UserInput  = game:GetService("UserInputService")
     C.Workspace  = game:GetService("Workspace")
-    C.Players    = game:GetService("Players")
+    C.Players    = Players
     C.Replicated = game:GetService("ReplicatedStorage")
     C.CoreGui    = game:GetService("CoreGui")
     C.lp    = C.Players.LocalPlayer
