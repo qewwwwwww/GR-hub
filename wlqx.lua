@@ -1,13 +1,25 @@
 local lp = game:GetService("Players").LocalPlayer
-local oldKick = lp.Kick
-lp.Kick = function(self, ...)
-    return
+
+pcall(function()
+    lp.Kick = function() end
+    lp.kick = function() end
+end)
+pcall(function()
+    getgenv().Kick = function() end
+    getgenv().kick = function() end
+end)
+
+local mt = getmetatable(lp)
+if mt and pcall(function() return mt.__index end) then
+    pcall(function()
+        mt.__index.Kick = function() end
+        mt.__index.kick = function() end
+    end)
 end
-getgenv().Kick = function(...) return end
 
 local oldGF = getfenv
 getgenv().getfenv = function(lvl)
-    local ok, e = pcall(oldGF, lvl)
+    local ok, e = pcall(oldGF, lvl or 0)
     if ok and type(e) == "table" then
         e.getgenv = nil e.syn = nil e.krnl = nil e.fluxus = nil
     end
