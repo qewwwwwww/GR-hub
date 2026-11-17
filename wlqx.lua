@@ -76,7 +76,7 @@ return function(Library, Window, GHub)
 
     C.SHOOT_ENABLED   = false
     C.SHOOT_INTERVAL  = 0.2
-    C.SHOOT_BATCH_MAX = 50
+    C.SHOOT_BATCH_MAX = 5
     C.SHOOT_RANGE     = 500
     C._shootConn      = nil
     C._shootLast      = 0
@@ -582,6 +582,8 @@ return function(Library, Window, GHub)
         if not weapon then return end
         local myRoot = getChar() and getChar():FindFirstChild("HumanoidRootPart")
         local origin = myRoot and myRoot.Position or Vector3.zero
+        local isFlame = weapon.Name == "Flamethrower"
+
         local zombies = {}
         for _, e in ipairs(C.ENTITIES:GetChildren()) do
             if isShootTarget(e) and isAlive(e) then
@@ -596,8 +598,10 @@ return function(Library, Window, GHub)
         end
         if #zombies == 0 then return end
         table.sort(zombies, function(a, b) return a.dist < b.dist end)
+
+        local limit = isFlame and #zombies or math.min(C.SHOOT_BATCH_MAX, #zombies)
         local batch = {}
-        for i = 1, math.min(C.SHOOT_BATCH_MAX, #zombies) do
+        for i = 1, limit do
             local z = zombies[i]
             local dir = (z.part.Position - origin).Unit
             batch[#batch + 1] = {
@@ -892,7 +896,7 @@ return function(Library, Window, GHub)
     })
     Shoot:AddSlider("shootBatch", {
         Text = "单包目标数", Default = C.SHOOT_BATCH_MAX,
-        Min = 1, Max = 50, Rounding = 0,
+        Min = 1, Max = 5, Rounding = 0,
         Callback = function(v) C.SHOOT_BATCH_MAX = v end,
     })
     Shoot:AddSlider("shootRange", {
@@ -948,7 +952,7 @@ return function(Library, Window, GHub)
         end,
     })
 
-        PR:AddSlider("localSpeedValue", {
+    PR:AddSlider("localSpeedValue", {
         Text = "移速值", Default = C.SPEED_VALUE,
         Min = 1, Max = 50, Rounding = 0, Suffix = " ws",
         Callback = function(v) C.SPEED_VALUE = v; if C.SPEED_ENABLED then applySpeed() end end,
@@ -1029,7 +1033,7 @@ return function(Library, Window, GHub)
             if O.killEspDist   then O.killEspDist:SetValue(500) end
             if O.shootEnable   then O.shootEnable:SetValue(false) end
             if O.shootInterval then O.shootInterval:SetValue(0.2) end
-            if O.shootBatch    then O.shootBatch:SetValue(50) end
+            if O.shootBatch    then O.shootBatch:SetValue(5) end
             if O.shootRange    then O.shootRange:SetValue(500) end
             if O.localSpeed       then O.localSpeed:SetValue(false) end
             if O.localCfSpeed     then O.localCfSpeed:SetValue(false) end
@@ -1047,4 +1051,3 @@ return function(Library, Window, GHub)
         end,
     })
 end
-
