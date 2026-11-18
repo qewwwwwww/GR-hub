@@ -78,6 +78,8 @@ return function(Library, Window, GHub)
     C.SHOOT_INTERVAL  = 1
     C.SHOOT_BATCH_MAX = 2
     C.SHOOT_RANGE     = 500
+    C.SHOOT_FAKE_FIRE = false
+    C.SHOOT_FAKE_GUN  = "M1921 Thompson"
     C._shootConn      = nil
     C._shootLast      = 0
     C._shootTool      = nil
@@ -577,6 +579,30 @@ return function(Library, Window, GHub)
         return p
     end
 
+    local function sendFakeShoot(origin, dir)
+        if not C.SHOOT_FAKE_FIRE then return end
+        local plr = game:GetService("Players").LocalPlayer
+        local char = plr and plr.Character
+        local gun = char and char:FindFirstChild(C.SHOOT_FAKE_GUN)
+        local ev = game:GetService("ReplicatedStorage"):FindFirstChild("Events")
+        ev = ev and ev:FindFirstChild("GunSystem")
+        if not (gun and ev) then return end
+        local o = origin
+            or (char:FindFirstChild("Head") and char.Head.Position)
+            or char:GetPivot().Position
+        local d = dir
+            or (C.Workspace.CurrentCamera and C.Workspace.CurrentCamera.CFrame.LookVector)
+            or Vector3.new(0, 0, -1)
+        pcall(function()
+            ev:FireServer("Shoot", gun, {
+                recoilPower = 0.1,
+                direction = d.Unit,
+                isAiming = false,
+                origin = o,
+            })
+        end)
+    end
+
     local function shootAllZombies()
         local weapon = equipGun()
         if not weapon then return end
@@ -630,6 +656,7 @@ return function(Library, Window, GHub)
             end
             task.spawn(function()
                 for _, chunk in ipairs(chunks) do
+                    sendFakeShoot(origin, chunk[1].direction)
                     pcall(function() C.GunSys:FireServer("DamageBatch", weapon, chunk) end)
                     if #chunks > 1 then task.wait(0.03 + math.random() * 0.05) end
                 end
@@ -903,6 +930,12 @@ return function(Library, Window, GHub)
             end
         end,
     })
+    Shoot:AddToggle("shootFakeFire", {
+        Text = "伪装射击包(测试)",
+        Default = false,
+        Tooltip = "发命中包前先发 GunSystem 射击包，伪装成客户端正常开火",
+        Callback = function(v) C.SHOOT_FAKE_FIRE = v end,
+    })
     Shoot:AddSlider("shootInterval", {
         Text = "枪击冷却", Default = C.SHOOT_INTERVAL,
         Min = 0.5, Max = 2, Rounding = 2, Suffix = " s",
@@ -950,7 +983,7 @@ return function(Library, Window, GHub)
         Text = "无限体力", Default = false,
         Tooltip = "体力在最低值与上限之间起伏，避免恒定值特征",
         Callback = function(v) C.STAMINA_ENABLED = v; if v then startStamina() else stopStamina() end end,
-    })   
+    })
     PL:AddToggle("localFly", {
         Text = "飞行", Default = false,
         Tooltip = "PlatformStand + BodyVelocity 驱动，WASD/摇杆移动，Space 上升 LeftCtrl 下降",
@@ -1046,6 +1079,7 @@ return function(Library, Window, GHub)
             if O.killMax       then O.killMax:SetValue(3) end
             if O.killEspDist   then O.killEspDist:SetValue(500) end
             if O.shootEnable   then O.shootEnable:SetValue(false) end
+            if O.shootFakeFire then O.shootFakeFire:SetValue(false) end
             if O.shootInterval then O.shootInterval:SetValue(1) end
             if O.shootBatch    then O.shootBatch:SetValue(2) end
             if O.shootRange    then O.shootRange:SetValue(500) end
