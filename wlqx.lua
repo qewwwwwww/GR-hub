@@ -75,8 +75,8 @@ return function(Library, Window, GHub)
     C.ESP_MAX_DISTANCE  = 500
 
     C.SHOOT_ENABLED   = false
-    C.SHOOT_INTERVAL  = 0.2
-    C.SHOOT_BATCH_MAX = 5
+    C.SHOOT_INTERVAL  = 1
+    C.SHOOT_BATCH_MAX = 2
     C.SHOOT_RANGE     = 500
     C._shootConn      = nil
     C._shootLast      = 0
@@ -619,8 +619,21 @@ return function(Library, Window, GHub)
                 target = z.entity
             }
         end
+
         if #batch > 0 then
-            pcall(function() C.GunSys:FireServer("DamageBatch", weapon, batch) end)
+            local per = isFlame and #batch or math.min(C.SHOOT_BATCH_MAX, #batch)
+            local chunks = {}
+            for i = 1, #batch, per do
+                local c = {}
+                for j = i, math.min(i + per - 1, #batch) do c[#c + 1] = batch[j] end
+                chunks[#chunks + 1] = c
+            end
+            task.spawn(function()
+                for _, chunk in ipairs(chunks) do
+                    pcall(function() C.GunSys:FireServer("DamageBatch", weapon, chunk) end)
+                    if #chunks > 1 then task.wait(0.03 + math.random() * 0.05) end
+                end
+            end)
         end
     end
     local function startShootLoop()
@@ -628,7 +641,8 @@ return function(Library, Window, GHub)
         C._shootConn = track(C.RunService.Heartbeat:Connect(function()
             if not C.SHOOT_ENABLED then return end
             local now = os.clock()
-            if now - C._shootLast >= C.SHOOT_INTERVAL then
+            local jitter = C.SHOOT_INTERVAL * (0.85 + math.random() * 0.4)
+            if now - C._shootLast >= jitter then
                 C._shootLast = now
                 pcall(shootAllZombies)
             end
@@ -891,12 +905,12 @@ return function(Library, Window, GHub)
     })
     Shoot:AddSlider("shootInterval", {
         Text = "枪击冷却", Default = C.SHOOT_INTERVAL,
-        Min = 0.01, Max = 0.2, Rounding = 2, Suffix = " s",
+        Min = 0.5, Max = 2, Rounding = 2, Suffix = " s",
         Callback = function(v) C.SHOOT_INTERVAL = v end,
     })
     Shoot:AddSlider("shootBatch", {
         Text = "单包目标数", Default = C.SHOOT_BATCH_MAX,
-        Min = 1, Max = 5, Rounding = 0,
+        Min = 1, Max = 50, Rounding = 0,
         Callback = function(v) C.SHOOT_BATCH_MAX = v end,
     })
     Shoot:AddSlider("shootRange", {
@@ -936,7 +950,7 @@ return function(Library, Window, GHub)
         Text = "无限体力", Default = false,
         Tooltip = "体力在最低值与上限之间起伏，避免恒定值特征",
         Callback = function(v) C.STAMINA_ENABLED = v; if v then startStamina() else stopStamina() end end,
-    })
+    })   
     PL:AddToggle("localFly", {
         Text = "飞行", Default = false,
         Tooltip = "PlatformStand + BodyVelocity 驱动，WASD/摇杆移动，Space 上升 LeftCtrl 下降",
@@ -1032,8 +1046,8 @@ return function(Library, Window, GHub)
             if O.killMax       then O.killMax:SetValue(3) end
             if O.killEspDist   then O.killEspDist:SetValue(500) end
             if O.shootEnable   then O.shootEnable:SetValue(false) end
-            if O.shootInterval then O.shootInterval:SetValue(0.2) end
-            if O.shootBatch    then O.shootBatch:SetValue(5) end
+            if O.shootInterval then O.shootInterval:SetValue(1) end
+            if O.shootBatch    then O.shootBatch:SetValue(2) end
             if O.shootRange    then O.shootRange:SetValue(500) end
             if O.localSpeed       then O.localSpeed:SetValue(false) end
             if O.localCfSpeed     then O.localCfSpeed:SetValue(false) end
