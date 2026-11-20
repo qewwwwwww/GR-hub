@@ -43,6 +43,8 @@ C._air = 0
 C._lookHooked = false
 C._cr = nil
 C._tracerFolder = nil
+C._sl = nil
+C._slGui = nil
 
 local LOOK_DOWN_PITCH = -0.75
 local LOOK_SYNC_ID = "0R5lsPxqfSH3"
@@ -55,6 +57,11 @@ local function si(i, p, c)
 end
 local function rn(n) return math.round(n * 1000) / 1000 end
 local function o3(v) return Vector3.new(rn(v.X), rn(v.Y), rn(v.Z)) end
+local function setSl(s)
+    local lb = C._sl
+    if not lb or not lb.Parent then return end
+    pcall(function() lb.Text = s end)
+end
 
 local function hookLookSync()
     if C._lookHooked then return end
@@ -874,16 +881,26 @@ R:AddSlider("defAcc", {
     Callback = function(v) C.SPD.Accl = v end,
 })
 
-local sl = Instance.new("TextLabel")
-sl.Size = UDim2.new(1, -20, 0, 90)
-sl.BackgroundTransparency = 1
-sl.TextColor3 = Color3.fromRGB(150, 220, 150)
-sl.Font = Enum.Font.Code
-sl.TextSize = 12
-sl.TextXAlignment = Enum.TextXAlignment.Left
-sl.TextYAlignment = Enum.TextYAlignment.Top
-sl.Text = "目标: 0"
-sl.Parent = MainTab
+C._slGui = Instance.new("ScreenGui")
+C._slGui.Name = "defense_status"
+C._slGui.ResetOnSpawn = false
+C._slGui.IgnoreGuiInset = true
+C._slGui.Parent = CoreGui
+
+C._sl = Instance.new("TextLabel")
+C._sl.Size = UDim2.new(0, 260, 0, 90)
+C._sl.Position = UDim2.new(0, 20, 0, 560)
+C._sl.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+C._sl.BackgroundTransparency = 0.25
+C._sl.BorderSizePixel = 0
+C._sl.TextColor3 = Color3.fromRGB(150, 220, 150)
+C._sl.Font = Enum.Font.Code
+C._sl.TextSize = 12
+C._sl.TextXAlignment = Enum.TextXAlignment.Left
+C._sl.TextYAlignment = Enum.TextYAlignment.Top
+C._sl.Text = "目标: 0"
+C._sl.Parent = C._slGui
+Instance.new("UICorner", C._sl).CornerRadius = UDim.new(0, 8)
 
 RunService.RenderStepped:Connect(function(dt)
     applySpeed()
@@ -902,21 +919,21 @@ RunService.RenderStepped:Connect(function(dt)
     end
     local ph = phase()
     if not C.CFG.Enabled then
-        sl.Text = string.format("阶段: %s | 目标: 0\n敌人: %d\n烟雾: %d\n防雷: %s | 防无人机: %s",
-            ph, countEnemy(), #C._smoke, C.CFG.AntiMine and "开" or "关", C.CFG.AntiDrone and "开" or "关")
+        setSl(string.format("阶段: %s | 目标: 0\n敌人: %d\n烟雾: %d\n防雷: %s | 防无人机: %s",
+            ph, countEnemy(), #C._smoke, C.CFG.AntiMine and "开" or "关", C.CFG.AntiDrone and "开" or "关"))
         return
     end
     if not canFire() then
-        sl.Text = string.format("阶段: %s | 不开火\n敌人: %d\n烟雾: %d", ph, countEnemy(), #C._smoke)
+        setSl(string.format("阶段: %s | 不开火\n敌人: %d\n烟雾: %d", ph, countEnemy(), #C._smoke))
         return
     end
     if not fireRemote() then
-        sl.Text = "❌ FireRemote 未找到"
+        setSl("FireRemote 未找到")
         return
     end
     local t = target()
     if not t then
-        sl.Text = string.format("阶段: %s | 目标: 0（烟雾/遮挡）\n敌人: %d\n烟雾: %d", ph, countEnemy(), #C._smoke)
+        setSl(string.format("阶段: %s | 目标: 0（烟雾/遮挡）\n敌人: %d\n烟雾: %d", ph, countEnemy(), #C._smoke))
         return
     end
     local w = curWeapon()
@@ -925,9 +942,9 @@ RunService.RenderStepped:Connect(function(dt)
         C._lastFire = now
         fireAt(t)
     end
-    sl.Text = string.format("阶段: %s | 目标: %s %.0fm\n敌人: %d\n烟雾: %d | 武器: %s\n防雷: %s | 防无人机: %s",
+    setSl(string.format("阶段: %s | 目标: %s %.0fm\n敌人: %d\n烟雾: %d | 武器: %s\n防雷: %s | 防无人机: %s",
         ph, t.Player.Name, t.Dist, countEnemy(), #C._smoke, w and w.Name or "无",
-        C.CFG.AntiMine and "开" or "关", C.CFG.AntiDrone and "开" or "关")
+        C.CFG.AntiMine and "开" or "关", C.CFG.AntiDrone and "开" or "关"))
 end)
 
 applyTP(C.CFG.ThirdPerson)
@@ -936,6 +953,7 @@ refreshESP()
 local function unload()
     if C._tracerFolder then C._tracerFolder:Destroy(); C._tracerFolder = nil end
     if lg then lg:Destroy() end
+    if C._slGui then C._slGui:Destroy(); C._slGui = nil; C._sl = nil end
     for p in pairs(C._espCache) do removeESP(p) end
     for i in pairs(C._reg) do unreg(i) end
 end
