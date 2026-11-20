@@ -33,7 +33,7 @@ C.CFG = {
     Stealth = false,
 }
 C.SPD = { WalkSpeed = 32, Accl = 2 }
-C.SPIN = { Dir = "正转", Speed = 180 }
+C.SPIN = { Dir = "顺时针", Speed = 180 }
 C._spinAngle = 0
 C._hip = nil
 C._lastFire = 0
@@ -135,9 +135,9 @@ end)
 
 local PN = { "GameOver", "WinBoard", "Warmup", "Preparation", "Freezetime", "RoundOver", "Halftime", "Timeout" }
 local PHN = {
-    GameOver = "结束", WinBoard = "胜利", Warmup = "热身", Preparation = "准备",
-    Freezetime = "冻结", RoundOver = "回合结束", Halftime = "中场", Timeout = "超时",
-    Round = "战斗中", Vote = "投票",
+    GameOver = "终局", WinBoard = "胜利", Warmup = "预热", Preparation = "部署",
+    Freezetime = "冻结", RoundOver = "回合终", Halftime = "中场", Timeout = "超时",
+    Round = "交战", Vote = "投票",
 }
 local function phase()
     for _, n in ipairs(PN) do
@@ -849,7 +849,7 @@ local function spin(dt)
     if not C.CFG.Spin then return end
     local mr = myRoot()
     if not mr or mr.Anchored then return end
-    local sign = (C.SPIN.Dir == "反转") and -1 or 1
+    local sign = (C.SPIN.Dir == "逆时针") and -1 or 1
     C._spinAngle = (C._spinAngle + math.rad(C.SPIN.Speed) * dt * sign) % (math.pi * 2)
     local p = mr.Position
     local v = mr.AssemblyLinearVelocity
@@ -873,23 +873,23 @@ end
 
 local MainTab = Window:AddTab("防御", "shield")
 local L = MainTab:AddLeftGroupbox("ragebot", "crosshair")
-local R = MainTab:AddRightGroupbox("参数", "sliders-horizontal")
-local D2 = MainTab:AddLeftGroupbox("防御", "shield-check")
-local V = MainTab:AddRightGroupbox("视觉", "eye")
+local R = MainTab:AddRightGroupbox("调参", "sliders-horizontal")
+local D2 = MainTab:AddLeftGroupbox("反制", "shield-check")
+local V = MainTab:AddRightGroupbox("视界", "eye")
 
 L:AddToggle("defEnable", {
-    Text = "自动开火",
+    Text = "开火总控",
     Default = false,
     Callback = function(v) C.CFG.Enabled = v end,
 })
 L:AddToggle("defRay", {
-    Text = "只打看得见的",
+    Text = "视线校验",
     Default = true,
     Callback = function(v) C.CFG.RayCheck = v end,
 })
 
 C._targetSel = L:AddDropdown("defTargets", {
-    Text = "选要打的人",
+    Text = "目标清单",
     Values = targetOptions(),
     Default = {},
     Multi = true,
@@ -910,7 +910,7 @@ C._targetSel = L:AddDropdown("defTargets", {
 })
 
 L:AddToggle("defTargetOn", {
-    Text = "按名单打",
+    Text = "清单过滤",
     Default = false,
     Callback = function(v)
         C._targetFilter = v
@@ -919,33 +919,33 @@ L:AddToggle("defTargetOn", {
 })
 
 L:AddToggle("defTeam", {
-    Text = "不打队友",
+    Text = "敌我识别",
     Default = true,
     Callback = function(v) C.CFG.TeamCheck = v end,
 })
 L:AddToggle("defBack", {
-    Text = "背对敌人",
+    Text = "反向姿态",
     Default = false,
     Callback = function(v) C.CFG.BackTurn = v end,
 })
 
 L:AddDropdown("defSpinDir", {
-    Text = "转圈方向",
-    Values = { "正转", "反转" },
+    Text = "自旋方向",
+    Values = { "顺时针", "逆时针" },
     Default = 1,
     Multi = false,
     Callback = function(Value)
-        C.SPIN.Dir = (Value == "反转") and "反转" or "正转"
+        C.SPIN.Dir = (Value == "逆时针") and "逆时针" or "顺时针"
     end,
 })
 L:AddSlider("defSpinSpeed", {
-    Text = "转圈快慢",
+    Text = "自旋速率",
     Default = C.SPIN.Speed,
     Min = 30, Max = 1080, Rounding = 0,
     Callback = function(v) C.SPIN.Speed = v end,
 })
 L:AddToggle("defSpin", {
-    Text = "转圈",
+    Text = "自旋同步",
     Default = false,
     Callback = function(v)
         C.CFG.Spin = v
@@ -954,7 +954,7 @@ L:AddToggle("defSpin", {
 })
 
 D2:AddToggle("defMine", {
-    Text = "标出地雷",
+    Text = "雷区标记",
     Default = true,
     Callback = function(v)
         C.CFG.MineESP = v
@@ -966,23 +966,23 @@ D2:AddToggle("defMine", {
     end,
 })
 D2:AddToggle("defDrone", {
-    Text = "打无人机",
+    Text = "无人机拦截",
     Default = true,
     Callback = function(v) C.CFG.AntiDrone = v end,
 })
 D2:AddToggle("defSmoke", {
-    Text = "烟雾里不打",
+    Text = "烟幕屏蔽",
     Default = true,
     Callback = function(v) C.CFG.SmokeBlock = v end,
 })
 D2:AddToggle("defSpeed", {
-    Text = "跑最快",
+    Text = "极速驱动",
     Default = true,
     Callback = function(v) C.CFG.MaxSpeed = v end,
 })
 
 V:AddToggle("defESP", {
-    Text = "标出敌人",
+    Text = "敌影高亮",
     Default = true,
     Callback = function(v)
         C.CFG.ESP = v
@@ -990,7 +990,7 @@ V:AddToggle("defESP", {
     end,
 })
 V:AddToggle("defTP", {
-    Text = "第三人称",
+    Text = "越肩视角",
     Default = true,
     Callback = function(v)
         C.CFG.ThirdPerson = v
@@ -998,12 +998,12 @@ V:AddToggle("defTP", {
     end,
 })
 V:AddToggle("defTracer", {
-    Text = "子弹轨迹",
+    Text = "弹道可视",
     Default = true,
     Callback = function(v) C.CFG.Tracer = v end,
 })
 V:AddToggle("defLook", {
-    Text = "低头",
+    Text = "视角压低",
     Default = false,
     Callback = function(v)
         C.CFG.LookDown = v
@@ -1011,7 +1011,7 @@ V:AddToggle("defLook", {
     end,
 })
 V:AddToggle("defStealth", {
-    Text = "隐藏特效",
+    Text = "静默模式",
     Default = false,
     Callback = function(v)
         C.CFG.Stealth = v
@@ -1029,7 +1029,7 @@ V:AddToggle("defStealth", {
 })
 
 R:AddSlider("defWalkSpeed", {
-    Text = "跑多快",
+    Text = "移动速率",
     Default = C.SPD.WalkSpeed,
     Min = 16, Max = 80, Rounding = 0,
     Callback = function(v) C.SPD.WalkSpeed = v end,
@@ -1044,15 +1044,15 @@ C._slGui.Parent = CoreGui
 C._sl = Instance.new("TextLabel")
 C._sl.Size = UDim2.new(0, 260, 0, 76)
 C._sl.Position = UDim2.new(0, 20, 0, 560)
-C._sl.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-C._sl.BackgroundTransparency = 0.25
+C._sl.BackgroundColor3 = Color3.fromRGB(10, 16, 24)
+C._sl.BackgroundTransparency = 0.2
 C._sl.BorderSizePixel = 0
-C._sl.TextColor3 = Color3.fromRGB(150, 220, 150)
+C._sl.TextColor3 = Color3.fromRGB(110, 235, 255)
 C._sl.Font = Enum.Font.Code
 C._sl.TextSize = 12
 C._sl.TextXAlignment = Enum.TextXAlignment.Left
 C._sl.TextYAlignment = Enum.TextYAlignment.Top
-C._sl.Text = "没开火"
+C._sl.Text = "SYS / 初始化"
 C._sl.Parent = C._slGui
 Instance.new("UICorner", C._sl).CornerRadius = UDim.new(0, 8)
 
@@ -1114,22 +1114,22 @@ RunService.RenderStepped:Connect(function(dt)
     local spinTxt = C.CFG.Spin and (C.SPIN.Dir .. " " .. C.SPIN.Speed) or "关"
     local listTxt = C._targetFilter and "开" or "关"
     if not C.CFG.Enabled then
-        setSl(string.format("阶段: %s | 没开火\n敌人: %d | 烟雾: %d\n名单: %s | 转圈: %s",
+        setSl(string.format("SYS / %s\n待机 | 敌 %d | 烟 %d\n清单 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, listTxt, spinTxt))
         return
     end
     if not canFire() then
-        setSl(string.format("阶段: %s | 这阶段不打\n敌人: %d | 烟雾: %d\n名单: %s | 转圈: %s",
+        setSl(string.format("SYS / %s\n禁火 | 敌 %d | 烟 %d\n清单 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, listTxt, spinTxt))
         return
     end
     if not fireRemote() then
-        setSl("没找到开火通道")
+        setSl("SYS / 链路断开")
         return
     end
     local t = target()
     if not t then
-        setSl(string.format("阶段: %s | 没目标\n敌人: %d | 烟雾: %d\n名单: %s | 转圈: %s",
+        setSl(string.format("SYS / %s\n无锁定 | 敌 %d | 烟 %d\n清单 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, listTxt, spinTxt))
         return
     end
@@ -1139,7 +1139,7 @@ RunService.RenderStepped:Connect(function(dt)
         C._lastFire = now
         fireAt(t)
     end
-    setSl(string.format("阶段: %s | 打 %s %dm\n敌人: %d | 烟雾: %d\n名单: %s | 转圈: %s",
+    setSl(string.format("SYS / %s\n锁定 %s %dm | 敌 %d\n烟 %d | 清单 %s | 自旋 %s",
         pn, t.Player.Name, math.floor(t.Dist), countEnemy(), #C._smoke, listTxt, spinTxt))
 end)
 
