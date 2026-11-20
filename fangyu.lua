@@ -54,6 +54,16 @@ C._sound = nil
 C._targetSel = nil
 C._blockedTargets = {}
 
+C._hlVis = (function()
+    local ok = pcall(function()
+        local t = Instance.new("Highlight")
+        local _ = t.Visible
+        t:Destroy()
+    end)
+    if ok then return "Visible" end
+    return "Enabled"
+end)()
+
 local FIRE_SOUND_ID = "rbxassetid://8679627751"
 local LOOK_DOWN_PITCH = -0.75
 local LOOK_SYNC_ID = "0R5lsPxqfSH3"
@@ -71,11 +81,15 @@ local function setSl(s)
     if not lb or not lb.Parent then return end
     pcall(function() lb.Text = s end)
 end
+local function setHlVisible(h, v)
+    if not h then return end
+    pcall(function() h[C._hlVis] = v end)
+end
 
 local function ensureSound()
     if C._sound and C._sound.Parent then return C._sound end
     local s = Instance.new("Sound")
-    s.Name = "wlqx_fire"
+    s.Name = "def_fire"
     s.SoundId = FIRE_SOUND_ID
     s.Volume = 0.6
     s.RollOffMode = Enum.RollOffMode.Inverse
@@ -185,8 +199,8 @@ end
 local function valid(p)
     local c = p.Character
     if not c then return false end
-    local h = c:FindFirstChild("Humanoid")
-    if not h or h.Health <= 0 then return false end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    if h and h.Health <= 0 then return false end
     return alive(p)
 end
 local function tpart(p)
@@ -358,7 +372,7 @@ end
 local function ensureTracerFolder()
     if C._tracerFolder and C._tracerFolder.Parent then return C._tracerFolder end
     local f = Instance.new("Folder")
-    f.Name = "wlqx_Tracers"
+    f.Name = "def_Tracers"
     f.Parent = Workspace
     C._tracerFolder = f
     return f
@@ -378,7 +392,7 @@ local function trace(s, e, life)
     local mid = (sp + e) * 0.5
     local folder = ensureTracerFolder()
     local core = Instance.new("Part")
-    core.Name = "trace_core"
+    core.Name = "def_trace"
     core.Anchored = true
     core.CanCollide = false
     core.CanQuery = false
@@ -390,7 +404,7 @@ local function trace(s, e, life)
     core.CFrame = CFrame.lookAt(mid, e)
     core.Parent = folder
     local glow = Instance.new("Part")
-    glow.Name = "trace_glow"
+    glow.Name = "def_trace_glow"
     glow.Anchored = true
     glow.CanCollide = false
     glow.CanQuery = false
@@ -477,14 +491,14 @@ local function createESP(p)
     local c = p.Character
     if not c then return nil end
     local h = Instance.new("Highlight")
-    h.Name = "wlqx_ESP"
+    h.Name = "def_ESP"
     h.FillColor = espColor(p)
     h.FillTransparency = 0.55
     h.OutlineColor = espColor(p)
     h.OutlineTransparency = 0
     h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     h.Adornee = c
-    h.Visible = not C.CFG.Stealth
+    setHlVisible(h, not C.CFG.Stealth)
     h.Parent = c
     return h
 end
@@ -502,7 +516,7 @@ local function refreshESP()
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= C.lp then
             local c = p.Character
-            if c and c:FindFirstChild("Humanoid") and c.Humanoid.Health > 0 then
+            if c and c:FindFirstChildOfClass("Humanoid") and c:FindFirstChildOfClass("Humanoid").Health > 0 then
                 local e = C._espCache[p]
                 if not e or not e.hl or e.hl.Parent ~= c then
                     if e and e.hl then e.hl:Destroy() end
@@ -512,7 +526,7 @@ local function refreshESP()
                     local col = espColor(p)
                     e.hl.FillColor = col
                     e.hl.OutlineColor = col
-                    e.hl.Visible = not C.CFG.Stealth
+                    setHlVisible(e.hl, not C.CFG.Stealth)
                 end
             else
                 removeESP(p)
@@ -536,7 +550,7 @@ local HM = Color3.fromRGB(255, 210, 40)
 local HD = Color3.fromRGB(0, 230, 255)
 
 local lg = Instance.new("ScreenGui")
-lg.Name = "wlqx_labels"
+lg.Name = "def_labels"
 lg.ResetOnSpawn = false
 lg.IgnoreGuiInset = true
 lg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -603,17 +617,17 @@ local function applyHL(i, color)
         if h and h.Parent then
             h.FillColor = color
             h.OutlineColor = color
-            h.Visible = not C.CFG.Stealth
+            setHlVisible(h, not C.CFG.Stealth)
         else
             h = Instance.new("Highlight")
-            h.Name = "wlqx_hl"
+            h.Name = "def_hl"
             h.FillColor = color
             h.FillTransparency = 0.55
             h.OutlineColor = color
             h.OutlineTransparency = 0
             h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
             h.Adornee = a
-            h.Visible = not C.CFG.Stealth
+            setHlVisible(h, not C.CFG.Stealth)
             h.Parent = a
             e.hlList[a] = h
         end
@@ -870,17 +884,16 @@ L:AddToggle("defRay", {
 
 C._targetSel = L:AddDropdown("defTargets", {
     Text = "目标选择",
-    MultipleOptions = true,
-    Options = targetOptions(),
+    Values = targetOptions(),
     Default = {},
-    Tooltip = "不勾选任何项 = 攻击全部可攻击玩家；勾选则只攻击所选目标",
-    Callback = function(values)
-        local picked = {}
-        local has = false
+    Multi = true,
+    Tooltip = "不勾选任何项 = 攻击全部可攻击玩家；勾选则只打所选",
+    Callback = function(Values)
+        local picked, has = {}, false
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= C.lp then
                 local k = targetKey(p)
-                if values and values[k] then
+                if Values and Values[k] then
                     picked[p] = true
                     has = true
                 end
@@ -908,12 +921,12 @@ L:AddToggle("defBack", {
 
 L:AddDropdown("defSpinDir", {
     Text = "旋转",
-    Options = { "正转", "反转" },
-    Default = "正转",
+    Values = { "正转", "反转" },
+    Default = 1,
+    Multi = false,
     Tooltip = "选择旋转方向，不受外部干扰",
-    Callback = function(v)
-        if type(v) == "table" then v = v[1] end
-        C.SPIN.Dir = (v == "反转") and "反转" or "正转"
+    Callback = function(Value)
+        C.SPIN.Dir = (Value == "反转") and "反转" or "正转"
     end,
 })
 L:AddSlider("defSpinSpeed", {
@@ -989,11 +1002,11 @@ V:AddToggle("defStealth", {
         if lg then lg.Enabled = not v end
         if C._slGui then C._slGui.Enabled = not v end
         for _, e in pairs(C._espCache) do
-            if e.hl then e.hl.Visible = not v end
+            setHlVisible(e.hl, not v)
         end
         for _, e in pairs(C._reg) do
             for _, h in pairs(e.hlList) do
-                if h then h.Visible = not v end
+                setHlVisible(h, not v)
             end
         end
     end,
@@ -1099,10 +1112,45 @@ RunService.RenderStepped:Connect(function(dt)
         C.CFG.MineESP and "开" or "关", C.CFG.AntiDrone and "开" or "关"))
 end)
 
+for _, p in ipairs(Players:GetPlayers()) do
+    local c = p.Character
+    if c then
+        for _, inst in ipairs(c:GetDescendants()) do
+            if inst:IsA("Highlight") and (inst.Name == "wlqx_ESP" or inst.Name == "wlqx_hl") then
+                inst:Destroy()
+            end
+        end
+    end
+end
+for _, inst in ipairs(CoreGui:GetChildren()) do
+    if inst.Name == "wlqx_labels" then inst:Destroy() end
+end
+for _, inst in ipairs(Workspace:GetChildren()) do
+    if inst.Name == "wlqx_Tracers" then inst:Destroy() end
+end
+
 applyTP(C.CFG.ThirdPerson)
 refreshESP()
 
 local function unload()
+    for _, inst in ipairs(CoreGui:GetChildren()) do
+        if inst.Name == "wlqx_labels" or inst.Name == "def_labels" or inst.Name == "defense_status" then
+            inst:Destroy()
+        end
+    end
+    for _, inst in ipairs(Workspace:GetChildren()) do
+        if inst.Name == "wlqx_Tracers" or inst.Name == "def_Tracers" then inst:Destroy() end
+    end
+    for _, p in ipairs(Players:GetPlayers()) do
+        local c = p.Character
+        if c then
+            for _, inst in ipairs(c:GetDescendants()) do
+                if inst:IsA("Highlight") and (inst.Name == "wlqx_ESP" or inst.Name == "def_ESP" or inst.Name == "wlqx_hl" or inst.Name == "def_hl") then
+                    inst:Destroy()
+                end
+            end
+        end
+    end
     if C._tracerFolder then C._tracerFolder:Destroy(); C._tracerFolder = nil end
     if lg then lg:Destroy() end
     if C._slGui then C._slGui:Destroy(); C._slGui = nil; C._sl = nil end
