@@ -34,7 +34,7 @@ C.CFG = {
     AutoJump = false,
 }
 C.SPD = { WalkSpeed = 32, Accl = 2 }
-C.SPIN = { Dir = "顺时针", Speed = 180 }
+C.SPIN = { Dir = "CW", Speed = 180 }
 C.HEAD = { Mode = "低头" }
 C.JUMP = { Gap = 0.3 }
 C._jumpT = 0
@@ -144,9 +144,9 @@ end
 
 local PN = { "GameOver", "WinBoard", "Warmup", "Preparation", "Freezetime", "RoundOver", "Halftime", "Timeout" }
 local PHN = {
-    GameOver = "终局", WinBoard = "胜利", Warmup = "预热", Preparation = "部署",
-    Freezetime = "冻结", RoundOver = "回合终", Halftime = "中场", Timeout = "超时",
-    Round = "交战", Vote = "投票",
+    GameOver = "GAMEOVER", WinBoard = "WIN", Warmup = "WARMUP", Preparation = "PREP",
+    Freezetime = "FREEZE", RoundOver = "ROUND_END", Halftime = "HALFTIME", Timeout = "TIMEOUT",
+    Round = "LIVE", Vote = "VOTE",
 }
 local function phase()
     for _, n in ipairs(PN) do
@@ -793,7 +793,7 @@ local function jumpPulse(r)
     end)
 end
 local function autoJump(dt)
-    if not C.CFG.AutoJump then
+    if not C.CFG.AutoJump or not canFire() then
         C._jumpT = 0
         C._jumpPend = 0
         C._jumpArmed = false
@@ -910,7 +910,7 @@ local function spin(dt)
     if not C.CFG.Spin then return end
     local mr = myRoot()
     if not mr or mr.Anchored then return end
-    local sign = (C.SPIN.Dir == "逆时针") and -1 or 1
+    local sign = (C.SPIN.Dir == "CCW") and -1 or 1
     C._spinAngle = (C._spinAngle + math.rad(C.SPIN.Speed) * dt * sign) % (math.pi * 2)
     local p = mr.Position
     local v = mr.AssemblyLinearVelocity
@@ -919,7 +919,7 @@ local function spin(dt)
 end
 
 local function targetKey(p)
-    return p.Name .. " [" .. tostring(team(p) or "无队伍") .. "]"
+    return p.Name .. " [" .. tostring(team(p) or "UNK") .. "]"
 end
 local function targetOptions()
     local t = {}
@@ -928,29 +928,29 @@ local function targetOptions()
             t[#t + 1] = targetKey(p)
         end
     end
-    if #t == 0 then t[1] = "暂无目标" end
+    if #t == 0 then t[1] = "NO TARGETS" end
     return t
 end
 
-local MainTab = Window:AddTab("防御", "shield")
-local L = MainTab:AddLeftGroupbox("ragebot", "crosshair")
-local R = MainTab:AddRightGroupbox("调参", "sliders-horizontal")
-local D2 = MainTab:AddLeftGroupbox("反制", "shield-check")
-local V = MainTab:AddRightGroupbox("视界", "eye")
+local MainTab = Window:AddTab("RAGEBOT", "shield")
+local L = MainTab:AddLeftGroupbox("RAGE", "crosshair")
+local R = MainTab:AddRightGroupbox("MOVEMENT", "sliders-horizontal")
+local D2 = MainTab:AddLeftGroupbox("MISC", "shield-check")
+local V = MainTab:AddRightGroupbox("VISUALS", "eye")
 
 L:AddToggle("defEnable", {
-    Text = "开火总控",
+    Text = "RAGE / MASTER",
     Default = false,
     Callback = function(v) C.CFG.Enabled = v end,
 })
 L:AddToggle("defRay", {
-    Text = "视线校验",
+    Text = "VIS CHECK [LOS]",
     Default = false,
     Callback = function(v) C.CFG.RayCheck = v end,
 })
 
 C._targetSel = L:AddDropdown("defTargets", {
-    Text = "目标清单",
+    Text = "TARGET SEL",
     Values = targetOptions(),
     Default = {},
     Multi = true,
@@ -971,7 +971,7 @@ C._targetSel = L:AddDropdown("defTargets", {
 })
 
 L:AddToggle("defTargetOn", {
-    Text = "清单过滤",
+    Text = "WHITELIST [ON]",
     Default = false,
     Callback = function(v)
         C._targetFilter = v
@@ -980,33 +980,33 @@ L:AddToggle("defTargetOn", {
 })
 
 L:AddToggle("defTeam", {
-    Text = "敌我识别",
+    Text = "TEAM CHECK",
     Default = false,
     Callback = function(v) C.CFG.TeamCheck = v end,
 })
 L:AddToggle("defBack", {
-    Text = "反向姿态",
+    Text = "ANTI-AIM [BACK]",
     Default = false,
     Callback = function(v) C.CFG.BackTurn = v end,
 })
 
 L:AddDropdown("defSpinDir", {
-    Text = "自旋方向",
-    Values = { "顺时针", "逆时针" },
+    Text = "SPINBOT / YAW",
+    Values = { "CW", "CCW" },
     Default = 1,
     Multi = false,
     Callback = function(Value)
-        C.SPIN.Dir = (Value == "逆时针") and "逆时针" or "顺时针"
+        C.SPIN.Dir = (Value == "CCW") and "CCW" or "CW"
     end,
 })
 L:AddSlider("defSpinSpeed", {
-    Text = "自旋速率",
+    Text = "SPINBOT / SPEED",
     Default = C.SPIN.Speed,
     Min = 30, Max = 1080, Rounding = 0,
     Callback = function(v) C.SPIN.Speed = v end,
 })
 L:AddToggle("defSpin", {
-    Text = "自旋同步",
+    Text = "SPINBOT / ENABLE",
     Default = false,
     Callback = function(v)
         C.CFG.Spin = v
@@ -1015,7 +1015,7 @@ L:AddToggle("defSpin", {
 })
 
 D2:AddToggle("defMine", {
-    Text = "雷区标记",
+    Text = "MINE ESP",
     Default = false,
     Callback = function(v)
         C.CFG.MineESP = v
@@ -1027,23 +1027,23 @@ D2:AddToggle("defMine", {
     end,
 })
 D2:AddToggle("defDrone", {
-    Text = "无人机拦截",
+    Text = "DRONE RAGE [ALL]",
     Default = false,
     Callback = function(v) C.CFG.AntiDrone = v end,
 })
 D2:AddToggle("defSmoke", {
-    Text = "烟幕屏蔽",
+    Text = "SMOKE CHECK",
     Default = false,
     Callback = function(v) C.CFG.SmokeBlock = v end,
 })
 D2:AddToggle("defSpeed", {
-    Text = "极速驱动",
+    Text = "SPEEDHACK",
     Default = false,
     Callback = function(v) C.CFG.MaxSpeed = v end,
 })
 
 V:AddToggle("defESP", {
-    Text = "敌影高亮",
+    Text = "PLAYER ESP [CHAMS]",
     Default = false,
     Callback = function(v)
         C.CFG.ESP = v
@@ -1051,7 +1051,7 @@ V:AddToggle("defESP", {
     end,
 })
 V:AddToggle("defTP", {
-    Text = "越肩视角",
+    Text = "THIRDPERSON [OVR]",
     Default = false,
     Callback = function(v)
         C.CFG.ThirdPerson = v
@@ -1059,12 +1059,12 @@ V:AddToggle("defTP", {
     end,
 })
 V:AddToggle("defTracer", {
-    Text = "弹道可视",
+    Text = "TRACERS",
     Default = false,
     Callback = function(v) C.CFG.Tracer = v end,
 })
 V:AddToggle("defHead", {
-    Text = "头部控制",
+    Text = "PITCH OVERRIDE",
     Default = false,
     Callback = function(v)
         C.CFG.HeadCtrl = v
@@ -1072,12 +1072,12 @@ V:AddToggle("defHead", {
     end,
 })
 V:AddDropdown("defHeadMode", {
-    Text = "头部方向",
-    Values = { "抬头", "低头" },
+    Text = "PITCH AXIS",
+    Values = { "UP [+1]", "DOWN [-1]" },
     Default = 2,
     Multi = false,
     Callback = function(Value)
-        if Value == 1 or Value == "抬头" then
+        if Value == 1 or Value == "UP [+1]" or Value == "UP" then
             C.HEAD.Mode = "抬头"
         else
             C.HEAD.Mode = "低头"
@@ -1085,7 +1085,7 @@ V:AddDropdown("defHeadMode", {
     end,
 })
 V:AddToggle("defStealth", {
-    Text = "静默模式",
+    Text = "STREAMPROOF",
     Default = false,
     Callback = function(v)
         C.CFG.Stealth = v
@@ -1103,13 +1103,13 @@ V:AddToggle("defStealth", {
 })
 
 R:AddSlider("defWalkSpeed", {
-    Text = "移动速率",
+    Text = "WALKSPEED",
     Default = C.SPD.WalkSpeed,
     Min = 16, Max = 80, Rounding = 0,
     Callback = function(v) C.SPD.WalkSpeed = v end,
 })
 R:AddToggle("defAutoJump", {
-    Text = "自动跳跃",
+    Text = "AUTO BHOP",
     Default = false,
     Callback = function(v)
         C.CFG.AutoJump = v
@@ -1119,7 +1119,7 @@ R:AddToggle("defAutoJump", {
     end,
 })
 R:AddSlider("defJumpGap", {
-    Text = "跳跃间隔",
+    Text = "BHOP INTERVAL",
     Default = C.JUMP.Gap,
     Min = 0.1, Max = 2, Rounding = 1,
     Callback = function(v) C.JUMP.Gap = v end,
@@ -1142,7 +1142,7 @@ C._sl.Font = Enum.Font.Code
 C._sl.TextSize = 12
 C._sl.TextXAlignment = Enum.TextXAlignment.Left
 C._sl.TextYAlignment = Enum.TextYAlignment.Top
-C._sl.Text = "SYS / 初始化"
+C._sl.Text = "RAGE // BOOT"
 C._sl.Parent = C._slGui
 Instance.new("UICorner", C._sl).CornerRadius = UDim.new(0, 8)
 
@@ -1199,28 +1199,29 @@ RunService.RenderStepped:Connect(function(dt)
         C._optT = 0
         refreshTargetOptions()
     end
-    local pn = phaseName() .. (C.CFG.AutoJump and " · 跃" or "")
-    local spinTxt = C.CFG.Spin and (C.SPIN.Dir .. " " .. C.SPIN.Speed) or "关"
-    local headTxt = C.CFG.HeadCtrl and C.HEAD.Mode or "关"
-    local listTxt = (C._targetFilter and "开" or "关") .. " | 头控 " .. headTxt
+    local live = canFire()
+    local pn = phaseName() .. (C.CFG.AutoJump and live and " · BHOP" or "")
+    local aa = C.CFG.Spin and (C.SPIN.Dir .. " " .. C.SPIN.Speed) or "OFF"
+    local pit = C.CFG.HeadCtrl and ((C.HEAD.Mode == "抬头") and "UP" or "DOWN") or "OFF"
+    local wl = (C._targetFilter and "ON" or "OFF") .. " | PITCH " .. pit
     if not C.CFG.Enabled then
-        setSl(string.format("SYS / %s\n待机 | 敌 %d | 烟 %d\n清单 %s | 自旋 %s",
-            pn, countEnemy(), #C._smoke, listTxt, spinTxt))
+        setSl(string.format("RAGE // %s\nSTANDBY | ENT %d | SMK %d\nWL %s | AA %s",
+            pn, countEnemy(), #C._smoke, wl, aa))
         return
     end
-    if not canFire() then
-        setSl(string.format("SYS / %s\n禁火 | 敌 %d | 烟 %d\n清单 %s | 自旋 %s",
-            pn, countEnemy(), #C._smoke, listTxt, spinTxt))
+    if not live then
+        setSl(string.format("RAGE // %s\nHOLD [PHASE] | ENT %d | SMK %d\nWL %s | AA %s",
+            pn, countEnemy(), #C._smoke, wl, aa))
         return
     end
     if not fireRemote() then
-        setSl("SYS / 链路断开")
+        setSl("RAGE // LINK LOST")
         return
     end
     local t = target()
     if not t then
-        setSl(string.format("SYS / %s\n无锁定 | 敌 %d | 烟 %d\n清单 %s | 自旋 %s",
-            pn, countEnemy(), #C._smoke, listTxt, spinTxt))
+        setSl(string.format("RAGE // %s\nNO LOCK | ENT %d | SMK %d\nWL %s | AA %s",
+            pn, countEnemy(), #C._smoke, wl, aa))
         return
     end
     local w = curWeapon()
@@ -1229,8 +1230,8 @@ RunService.RenderStepped:Connect(function(dt)
         C._lastFire = now
         fireAt(t)
     end
-    setSl(string.format("SYS / %s\n锁定 %s %dm | 敌 %d\n烟 %d | 清单 %s | 自旋 %s",
-        pn, t.Player.Name, math.floor(t.Dist), countEnemy(), #C._smoke, listTxt, spinTxt))
+    setSl(string.format("RAGE // %s\nLOCK %s %dm | ENT %d\nSMK %d | WL %s | AA %s",
+        pn, t.Player.Name, math.floor(t.Dist), countEnemy(), #C._smoke, wl, aa))
 end)
 
 for _, p in ipairs(Players:GetPlayers()) do
