@@ -38,6 +38,8 @@ C.SPIN = { Dir = "顺时针", Speed = 180 }
 C.HEAD = { Mode = "低头" }
 C.JUMP = { Gap = 0.3 }
 C._jumpT = 0
+C._jumpPend = 0
+C._jumpArmed = false
 C._spinAngle = 0
 C._hip = nil
 C._lastFire = 0
@@ -783,26 +785,62 @@ local function antiFloat(dt)
         C._air = 0
     end
 end
+local function jumpPulse(r)
+    if not r then return end
+    pcall(function()
+        local v = r.AssemblyLinearVelocity
+        if v.Y < 18 then r.AssemblyLinearVelocity = Vector3.new(v.X, 22, v.Z) end
+    end)
+end
 local function autoJump(dt)
     if not C.CFG.AutoJump then
         C._jumpT = 0
+        C._jumpPend = 0
+        C._jumpArmed = false
         return
     end
     local c = C.lp.Character
     if not c then return end
     local h = c:FindFirstChildOfClass("Humanoid")
+    local r = c:FindFirstChild("HumanoidRootPart")
     if not h or h.Health <= 0 then return end
-    if h.Sit or h.PlatformStand then return end
     local s = h:GetState()
-    if s == Enum.HumanoidStateType.Jumping or s == Enum.HumanoidStateType.Freefall then
+    local inAir = (s == Enum.HumanoidStateType.Jumping) or (s == Enum.HumanoidStateType.Freefall) or (s == Enum.HumanoidStateType.FallingDown)
+    if inAir then
+        C._jumpT = 0
+        C._jumpPend = 0
+        C._jumpArmed = false
+        return
+    end
+    if C._jumpArmed then
+        C._jumpPend = C._jumpPend + dt
+        if C._jumpPend >= 0.12 then
+            C._jumpPend = 0
+            C._jumpArmed = false
+            pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end)
+            jumpPulse(r)
+        end
+        return
+    end
+    if s == Enum.HumanoidStateType.Seated or s == Enum.HumanoidStateType.Dead then
         C._jumpT = 0
         return
     end
-    if s == Enum.HumanoidStateType.Seated or s == Enum.HumanoidStateType.Dead then return end
     C._jumpT = C._jumpT + dt
     if C._jumpT >= C.JUMP.Gap then
         C._jumpT = 0
+        pcall(function()
+            h:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+            h:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+            if h.PlatformStand then h.PlatformStand = false end
+            if h.Sit then h.Sit = false end
+            if r and r.Anchored then r.Anchored = false end
+        end)
+        pcall(function() if h.JumpPower and h.JumpPower <= 0 then h.JumpPower = 50 end end)
+        pcall(function() if h.JumpHeight and h.JumpHeight <= 0 then h.JumpHeight = 7.2 end end)
         pcall(function() h.Jump = true end)
+        C._jumpArmed = true
+        C._jumpPend = 0
     end
 end
 local function hookAccl()
@@ -829,31 +867,26 @@ C.lp.CharacterAdded:Connect(function()
 end)
 hookAccl()
 
-local function applyTP(on)
-    if not on then return end
+local function enforceTP()
     ss(C.lp, "CameraMode", Enum.CameraMode.Classic)
     ss(C.lp, "CameraMaxZoomDistance", 128)
     ss(C.lp, "CameraMinZoomDistance", 8)
 end
-RunService.Stepped:Connect(function()
-    if C.CFG.ThirdPerson and C.lp.CameraMode ~= Enum.CameraMode.Classic then
-        ss(C.lp, "CameraMode", Enum.CameraMode.Classic)
-    end
-end)
-si(C.lp, "CameraMode", function()
-    if C.CFG.ThirdPerson and C.lp.CameraMode ~= Enum.CameraMode.Classic then
-        task.defer(function() if C.CFG.ThirdPerson then ss(C.lp, "CameraMode", Enum.CameraMode.Classic) end end)
-    end
-end)
-si(C.lp, "CameraMaxZoomDistance", function()
-    if C.CFG.ThirdPerson and C.lp.CameraMaxZoomDistance ~= 128 then
-        task.defer(function() if C.CFG.ThirdPerson then ss(C.lp, "CameraMaxZoomDistance", 128) end end)
-    end
-end)
+local function applyTP(on)
+    if on then enforceTP() end
+end
+local function guardTP()
+    if C.CFG.ThirdPerson then enforceTP() end
+end
+si(C.lp, "CameraMode", guardTP)
+si(C.lp, "CameraMaxZoomDistance", guardTP)
+si(C.lp, "CameraMinZoomDistance", guardTP)
+RunService.Stepped:Connect(guardTP)
+C._tpBeat = RunService.Heartbeat:Connect(guardTP)
 C.lp.CharacterAdded:Connect(function()
     if C.CFG.ThirdPerson then
         task.wait(0.1)
-        applyTP(true)
+        enforceTP()
     end
 end)
 
@@ -1081,6 +1114,8 @@ R:AddToggle("defAutoJump", {
     Callback = function(v)
         C.CFG.AutoJump = v
         C._jumpT = 0
+        C._jumpPend = 0
+        C._jumpArmed = false
     end,
 })
 R:AddSlider("defJumpGap", {
@@ -1152,9 +1187,7 @@ RunService.RenderStepped:Connect(function(dt)
     tickIgnore(dt)
     scanDestroy(dt)
     tryDrone()
-    if C.CFG.ThirdPerson and C.lp.CameraMode ~= Enum.CameraMode.Classic then
-        ss(C.lp, "CameraMode", Enum.CameraMode.Classic)
-    end
+    guardTP()
     if C.CFG.Spin then spin(dt) elseif C.CFG.BackTurn then backTurn() end
     C._espT = C._espT + dt
     if C._espT >= 0.5 then
@@ -1221,7 +1254,12 @@ refreshESP()
 
 local function unload()
     C.CFG.HeadCtrl = false
+    C.CFG.ThirdPerson = false
+    if C._tpBeat then C._tpBeat:Disconnect(); C._tpBeat = nil end
     C.CFG.AutoJump = false
+    C._jumpT = 0
+    C._jumpPend = 0
+    C._jumpArmed = false
     C._lookRemote = nil
     for _, inst in ipairs(CoreGui:GetChildren()) do
         if inst.Name == "wlqx_labels" or inst.Name == "def_labels" or inst.Name == "defense_status" then
