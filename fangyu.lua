@@ -34,9 +34,8 @@ C.CFG = {
 }
 C.SPD = { WalkSpeed = 32, Accl = 2 }
 C.SPIN = { Dir = "正转", Speed = 180 }
+C._targetFilter = false
 C._spinAngle = 0
-C._spinJoint = nil
-C._spinBaseC0 = nil
 C._hip = nil
 C._lastFire = 0
 C._espT = 0
@@ -70,6 +69,11 @@ end)()
 local FIRE_SOUND_ID = "rbxassetid://8679627751"
 local LOOK_DOWN_PITCH = -0.75
 local LOOK_SYNC_ID = "0R5lsPxqfSH3"
+local PN = {
+    Warmup = "热身", Preparation = "准备", Freezetime = "冻结",
+    Round = "战斗中", Halftime = "中场", RoundOver = "胜利",
+    WinBoard = "胜利", GameOver = "胜利", Timeout = "超时", Vote = "投票",
+}
 
 local function ss(i, p, v)
     if i then pcall(function() i[p] = v end) end
@@ -141,9 +145,13 @@ local function phase()
     if ReplicatedStorage:GetAttribute("GameActive") then return "Round" end
     return "Vote"
 end
+local function phaseName(p)
+    return PN[p] or p
+end
 local function canFire()
     local p = phase()
     return p == "Warmup" or p == "Round" or p == "Halftime"
+        or p == "GameOver" or p == "WinBoard" or p == "RoundOver"
 end
 
 local function remoteName(seed)
@@ -330,7 +338,8 @@ local function scan()
     local near, nd = nil, math.huge
     local vis, vd = nil, math.huge
     for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= C.lp and valid(p) and enemy(p) then
+        local skip = C._targetFilter and C._blockedTargets[p]
+        if p ~= C.lp and not skip and valid(p) and enemy(p) then
             local part, pos = tpart(p)
             if part then
                 local d = (pos - mp).Magnitude
@@ -343,11 +352,7 @@ local function scan()
 end
 local function target()
     local n, v = scan()
-    if C.CFG.RayCheck then
-        if v and C._blockedTargets[v.Player] then v = nil end
-        return v
-    end
-    if n and C._blockedTargets[n.Player] then n = nil end
+    if C.CFG.RayCheck then return v end
     return n
 end
 local function countEnemy()
@@ -792,8 +797,6 @@ end
 C.lp.CharacterAdded:Connect(function()
     C._hip = nil
     C._spinAngle = 0
-    C._spinJoint = nil
-    C._spinBaseC0 = nil
     hookAccl()
 end)
 hookAccl()
@@ -845,40 +848,19 @@ local function backTurn()
     mr.CFrame = CFrame.new(mp) * CFrame.lookAt(mp, mp + fb).Rotation
 end
 
-local function ensureSpinJoint()
-    if C._spinJoint and C._spinJoint.Parent then return C._spinJoint end
-    local c = C.lp.Character
-    if not c then return nil end
-    local r = c:FindFirstChild("HumanoidRootPart")
-    local t = c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso")
-    if not r or not t then return nil end
-    for _, j in ipairs(r:GetJoints()) do
-        if j:IsA("Motor6D") and (j.Part1 == t or j.Part0 == t) then
-            C._spinJoint = j
-            if not C._spinBaseC0 then C._spinBaseC0 = j.C0 end
-            return j
-        end
-    end
-    return nil
-end
-
 local function spin(dt)
     if not C.CFG.Spin then return end
     local mr = myRoot()
     if not mr or mr.Anchored then return end
     local sign = (C.SPIN.Dir == "反转") and -1 or 1
     C._spinAngle = (C._spinAngle + math.rad(C.SPIN.Speed) * dt * sign) % (math.pi * 2)
-    local j = ensureSpinJoint()
-    if j then
-        j.C0 = C._spinBaseC0 * CFrame.Angles(0, C._spinAngle, 0)
-    else
-        local p = mr.Position
-        local v = mr.AssemblyLinearVelocity
-        mr.CFrame = CFrame.new(p) * CFrame.Angles(0, C._spinAngle, 0)
-        mr.AssemblyLinearVelocity = Vector3.new(v.X, mr.AssemblyLinearVelocity.Y, v.Z)
-    end
+    local p = mr.Position
+    local v = mr.AssemblyLinearVelocity
+    mr.CFrame = CFrame.new(p) * CFrame.Angles(0, C._spinAngle, 0)
+    mr.AssemblyLinearVelocity = Vector3.new(v.X, v.Y, v.Z)
 end
 
+local NO_TARGET = "暂无目标"
 local function targetKey(p)
     return p.Name .. " [" .. tostring(team(p) or "无队伍") .. "]"
 end
@@ -889,87 +871,105 @@ local function targetOptions()
             t[#t + 1] = targetKey(p)
         end
     end
-    if #t == 0 then t[1] = "暂无目标" end
+    if #t == 0 then t[1] = NO_TARGET end
     return t
+end
+local function pickedKeys(Values)
+    local cur = {}
+    if type(Values) == "table" then
+        for k, on in pairs(Values) do
+            if on and k ~= NO_TARGET then cur[k] = true end
+        end
+    end
+    return cur
+end
+local function applyTargetFilter(Values)
+    C._blockedTargets = {}
+    if not C._targetFilter then return end
+    local cur = pickedKeys(Values)
+    local any = false
+    for _ in pairs(cur) do any = true; break end
+    if not any then return end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= C.lp and not cur[targetKey(p)] then
+            C._blockedTargets[p] = true
+        end
+    end
 end
 
 local MainTab = Window:AddTab("防御", "shield")
 local L = MainTab:AddLeftGroupbox("ragebot", "crosshair")
-local R = MainTab:AddRightGroupbox("参数", "sliders-horizontal")
+local R = MainTab:AddRightGroupbox("速度", "sliders-horizontal")
 local D2 = MainTab:AddLeftGroupbox("防御", "shield-check")
-local V = MainTab:AddRightGroupbox("视觉", "eye")
+local V = MainTab:AddRightGroupbox("画面", "eye")
 
 L:AddToggle("defEnable", {
-    Text = "总开关", Default = false,
-    Tooltip = "开启后自动开火",
+    Text = "自动开火", Default = false,
     Callback = function(v) C.CFG.Enabled = v end,
 })
 L:AddToggle("defRay", {
-    Text = "射线检测", Default = true,
+    Text = "只打看得见的", Default = true,
     Callback = function(v) C.CFG.RayCheck = v end,
 })
 
 C._targetSel = L:AddDropdown("defTargets", {
-    Text = "目标选择",
+    Text = "选要打的人",
     Values = targetOptions(),
     Default = {},
     Multi = true,
-    Tooltip = "不勾选任何项 = 攻击全部可攻击玩家；勾选则只打所选",
     Callback = function(Values)
-        C._blockedTargets = {}
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= C.lp then
-                local k = targetKey(p)
-                if not (Values and Values[k]) then
-                    C._blockedTargets[p] = true
-                end
-            end
-        end
+        applyTargetFilter(Values)
     end,
 })
-
+L:AddToggle("defTargetOn", {
+    Text = "按名单打", Default = false,
+    Callback = function(v)
+        C._targetFilter = v
+        if not v then
+            C._blockedTargets = {}
+            return
+        end
+        local cur = {}
+        pcall(function()
+            if C._targetSel then cur = pickedKeys(C._targetSel.Value) end
+        end)
+        applyTargetFilter(cur)
+    end,
+})
 L:AddToggle("defTeam", {
-    Text = "队伍检测", Default = true,
+    Text = "不打队友", Default = true,
     Callback = function(v) C.CFG.TeamCheck = v end,
 })
 L:AddToggle("defBack", {
-    Text = "背身单打", Default = false,
+    Text = "背对敌人", Default = false,
     Callback = function(v) C.CFG.BackTurn = v end,
 })
 
 L:AddDropdown("defSpinDir", {
-    Text = "旋转",
+    Text = "转圈方向",
     Values = { "正转", "反转" },
     Default = 1,
     Multi = false,
-    Tooltip = "选择旋转方向，不受外部干扰",
     Callback = function(Value)
         C.SPIN.Dir = (Value == "反转") and "反转" or "正转"
     end,
 })
 L:AddSlider("defSpinSpeed", {
-    Text = "旋转速度",
+    Text = "转圈快慢",
     Default = C.SPIN.Speed,
-    Min = 30, Max = 1080, Rounding = 0, Suffix = " °/s",
+    Min = 30, Max = 1080, Rounding = 0,
     Callback = function(v) C.SPIN.Speed = v end,
 })
 L:AddToggle("defSpin", {
-    Text = "启用旋转", Default = false,
+    Text = "转圈", Default = false,
     Callback = function(v)
         C.CFG.Spin = v
-        if not v then
-            C._spinAngle = 0
-            if C._spinJoint and C._spinJoint.Parent then
-                pcall(function() C._spinJoint.C0 = C._spinBaseC0 or CFrame.new() end)
-            end
-            C._spinJoint = nil
-            C._spinBaseC0 = nil
-        end
+        if not v then C._spinAngle = 0 end
     end,
 })
 
 D2:AddToggle("defMine", {
-    Text = "透视激光雷", Default = true,
+    Text = "标出地雷", Default = true,
     Callback = function(v)
         C.CFG.MineESP = v
         if not v then
@@ -980,21 +980,20 @@ D2:AddToggle("defMine", {
     end,
 })
 D2:AddToggle("defDrone", {
-    Text = "防无人机", Default = true,
-    Tooltip = "任何阶段都会自动打无人机",
+    Text = "打无人机", Default = true,
     Callback = function(v) C.CFG.AntiDrone = v end,
 })
 D2:AddToggle("defSmoke", {
-    Text = "烟雾遮挡", Default = true,
+    Text = "烟雾里不打", Default = true,
     Callback = function(v) C.CFG.SmokeBlock = v end,
 })
 D2:AddToggle("defSpeed", {
-    Text = "最高移速", Default = true,
+    Text = "跑最快", Default = true,
     Callback = function(v) C.CFG.MaxSpeed = v end,
 })
 
 V:AddToggle("defESP", {
-    Text = "透视", Default = true,
+    Text = "标出敌人", Default = true,
     Callback = function(v)
         C.CFG.ESP = v
         refreshESP()
@@ -1008,7 +1007,7 @@ V:AddToggle("defTP", {
     end,
 })
 V:AddToggle("defTracer", {
-    Text = "能量线", Default = true,
+    Text = "子弹轨迹", Default = true,
     Callback = function(v) C.CFG.Tracer = v end,
 })
 V:AddToggle("defLook", {
@@ -1019,9 +1018,7 @@ V:AddToggle("defLook", {
     end,
 })
 V:AddToggle("defStealth", {
-    Text = "我不确定别人能不能看见",
-    Default = false,
-    Tooltip = "开启后隐藏所有本地视觉（ESP/能量线/透视/状态栏），功能仍在运行",
+    Text = "隐藏特效", Default = false,
     Callback = function(v)
         C.CFG.Stealth = v
         if lg then lg.Enabled = not v end
@@ -1038,8 +1035,8 @@ V:AddToggle("defStealth", {
 })
 
 R:AddSlider("defWalkSpeed", {
-    Text = "移速值", Default = C.SPD.WalkSpeed,
-    Min = 16, Max = 80, Rounding = 0, Suffix = " ws",
+    Text = "跑多快", Default = C.SPD.WalkSpeed,
+    Min = 16, Max = 80, Rounding = 0,
     Callback = function(v) C.SPD.WalkSpeed = v end,
 })
 
@@ -1050,7 +1047,7 @@ C._slGui.IgnoreGuiInset = true
 C._slGui.Parent = CoreGui
 
 C._sl = Instance.new("TextLabel")
-C._sl.Size = UDim2.new(0, 260, 0, 90)
+C._sl.Size = UDim2.new(0, 240, 0, 76)
 C._sl.Position = UDim2.new(0, 20, 0, 560)
 C._sl.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
 C._sl.BackgroundTransparency = 0.25
@@ -1060,7 +1057,7 @@ C._sl.Font = Enum.Font.Code
 C._sl.TextSize = 12
 C._sl.TextXAlignment = Enum.TextXAlignment.Left
 C._sl.TextYAlignment = Enum.TextYAlignment.Top
-C._sl.Text = "目标: 0"
+C._sl.Text = "没开火"
 C._sl.Parent = C._slGui
 Instance.new("UICorner", C._sl).CornerRadius = UDim.new(0, 8)
 
@@ -1068,12 +1065,7 @@ local function refreshTargetOptions()
     if not C._targetSel then return end
     local keep = {}
     pcall(function()
-        local v = C._targetSel.Value
-        if type(v) == "table" then
-            for k, on in pairs(v) do
-                if on then keep[k] = true end
-            end
-        end
+        if C._targetSel then keep = pickedKeys(C._targetSel.Value) end
     end)
     pcall(function() C._targetSel:SetValues(targetOptions()) end)
     pcall(function() C._targetSel:SetValue(keep) end)
@@ -1119,24 +1111,22 @@ RunService.RenderStepped:Connect(function(dt)
         C._optT = 0
         refreshTargetOptions()
     end
-    local ph = phase()
+    local ph = phaseName(phase())
     if not C.CFG.Enabled then
-        setSl(string.format("阶段: %s | 目标: 0\n敌人: %d\n烟雾: %d\n激光雷: %s | 防无人机: %s\n旋转: %s %s°/s",
-            ph, countEnemy(), #C._smoke, C.CFG.MineESP and "开" or "关", C.CFG.AntiDrone and "开" or "关",
-            C.CFG.Spin and C.SPIN.Dir or "关", C.CFG.Spin and C.SPIN.Speed or 0))
+        setSl(string.format("%s\n敌人 %d · 烟雾 %d\n没开火", ph, countEnemy(), #C._smoke))
         return
     end
     if not canFire() then
-        setSl(string.format("阶段: %s | 不开火\n敌人: %d\n烟雾: %d", ph, countEnemy(), #C._smoke))
+        setSl(string.format("%s\n敌人 %d · 烟雾 %d\n不开火", ph, countEnemy(), #C._smoke))
         return
     end
     if not fireRemote() then
-        setSl("FireRemote 未找到")
+        setSl(string.format("%s\n没找到开火通道", ph))
         return
     end
     local t = target()
     if not t then
-        setSl(string.format("阶段: %s | 目标: 0（烟雾/遮挡）\n敌人: %d\n烟雾: %d", ph, countEnemy(), #C._smoke))
+        setSl(string.format("%s\n没有目标\n敌人 %d · 烟雾 %d", ph, countEnemy(), #C._smoke))
         return
     end
     local w = curWeapon()
@@ -1145,9 +1135,7 @@ RunService.RenderStepped:Connect(function(dt)
         C._lastFire = now
         fireAt(t)
     end
-    setSl(string.format("阶段: %s | 目标: %s %.0fm\n敌人: %d\n烟雾: %d | 武器: %s\n激光雷: %s | 防无人机: %s",
-        ph, t.Player.Name, t.Dist, countEnemy(), #C._smoke, w and w.Name or "无",
-        C.CFG.MineESP and "开" or "关", C.CFG.AntiDrone and "开" or "关"))
+    setSl(string.format("%s\n打 %s  %.0fm\n敌人 %d · 烟雾 %d", ph, t.Player.Name, t.Dist, countEnemy(), #C._smoke))
 end)
 
 for _, p in ipairs(Players:GetPlayers()) do
