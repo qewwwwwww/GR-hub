@@ -35,6 +35,8 @@ C.CFG = {
 C.SPD = { WalkSpeed = 32, Accl = 2 }
 C.SPIN = { Dir = "正转", Speed = 180 }
 C._spinAngle = 0
+C._spinJoint = nil
+C._spinBaseC0 = nil
 C._hip = nil
 C._lastFire = 0
 C._espT = 0
@@ -516,7 +518,8 @@ local function refreshESP()
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= C.lp then
             local c = p.Character
-            if c and c:FindFirstChildOfClass("Humanoid") and c:FindFirstChildOfClass("Humanoid").Health > 0 then
+            local hum = c and c:FindFirstChildOfClass("Humanoid")
+            if c and hum and hum.Health > 0 then
                 local e = C._espCache[p]
                 if not e or not e.hl or e.hl.Parent ~= c then
                     if e and e.hl then e.hl:Destroy() end
@@ -788,6 +791,8 @@ end
 C.lp.CharacterAdded:Connect(function()
     C._hip = nil
     C._spinAngle = 0
+    C._spinJoint = nil
+    C._spinBaseC0 = nil
     hookAccl()
 end)
 hookAccl()
@@ -839,17 +844,38 @@ local function backTurn()
     mr.CFrame = CFrame.new(mp) * CFrame.lookAt(mp, mp + fb).Rotation
 end
 
+local function ensureSpinJoint()
+    if C._spinJoint and C._spinJoint.Parent then return C._spinJoint end
+    local c = C.lp.Character
+    if not c then return nil end
+    local r = c:FindFirstChild("HumanoidRootPart")
+    local t = c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso")
+    if not r or not t then return nil end
+    for _, j in ipairs(r:GetJoints()) do
+        if j:IsA("Motor6D") and (j.Part1 == t or j.Part0 == t) then
+            C._spinJoint = j
+            if not C._spinBaseC0 then C._spinBaseC0 = j.C0 end
+            return j
+        end
+    end
+    return nil
+end
+
 local function spin(dt)
     if not C.CFG.Spin then return end
     local mr = myRoot()
     if not mr or mr.Anchored then return end
     local sign = (C.SPIN.Dir == "反转") and -1 or 1
     C._spinAngle = (C._spinAngle + math.rad(C.SPIN.Speed) * dt * sign) % (math.pi * 2)
-    local pos = mr.Position
-    local rot = CFrame.Angles(0, C._spinAngle, 0)
-    mr.CFrame = CFrame.new(pos) * rot
-    mr.AssemblyAngularVelocity = Vector3.zero
-    mr.AssemblyLinearVelocity = Vector3.new(0, mr.AssemblyLinearVelocity.Y, 0)
+    local j = ensureSpinJoint()
+    if j then
+        j.C0 = C._spinBaseC0 * CFrame.Angles(0, C._spinAngle, 0)
+    else
+        local p = mr.Position
+        local v = mr.AssemblyLinearVelocity
+        mr.CFrame = CFrame.new(p) * CFrame.Angles(0, C._spinAngle, 0)
+        mr.AssemblyLinearVelocity = Vector3.new(v.X, mr.AssemblyLinearVelocity.Y, v.Z)
+    end
 end
 
 local function targetKey(p)
@@ -939,7 +965,14 @@ L:AddToggle("defSpin", {
     Text = "启用旋转", Default = false,
     Callback = function(v)
         C.CFG.Spin = v
-        if not v then C._spinAngle = 0 end
+        if not v then
+            C._spinAngle = 0
+            if C._spinJoint and C._spinJoint.Parent then
+                pcall(function() C._spinJoint.C0 = C._spinBaseC0 or CFrame.new() end)
+            end
+            C._spinJoint = nil
+            C._spinBaseC0 = nil
+        end
     end,
 })
 
