@@ -34,7 +34,7 @@ C.CFG = {
     AutoJump = false,
 }
 C.SPD = { WalkSpeed = 32, Accl = 2 }
-C.SPIN = { Dir = "CW", Speed = 180 }
+C.SPIN = { Dir = "顺时针", Speed = 180 }
 C.HEAD = { Mode = "低头" }
 C.JUMP = { Gap = 0.3 }
 C._jumpT = 0
@@ -56,6 +56,7 @@ C._lookRemote = nil
 C._intRunning = false
 C._cr = nil
 C._tracerFolder = nil
+C._espFolder = nil
 C._sl = nil
 C._slGui = nil
 C._sound = nil
@@ -63,15 +64,6 @@ C._targetSel = nil
 C._blockedTargets = {}
 C._targetFilter = false
 
-C._hlVis = (function()
-    local ok = pcall(function()
-        local t = Instance.new("Highlight")
-        local _ = t.Visible
-        t:Destroy()
-    end)
-    if ok then return "Visible" end
-    return "Enabled"
-end)()
 
 local FIRE_SOUND_ID = "rbxassetid://8679627751"
 local LOOK_REMOTE = "RE_0R5lsPxqfSH3"
@@ -98,7 +90,8 @@ local function setSl(s)
 end
 local function setHlVisible(h, v)
     if not h then return end
-    pcall(function() h[C._hlVis] = v end)
+    pcall(function() h.Enabled = v end)
+    pcall(function() h.Visible = v end)
 end
 
 local function ensureSound()
@@ -144,9 +137,9 @@ end
 
 local PN = { "GameOver", "WinBoard", "Warmup", "Preparation", "Freezetime", "RoundOver", "Halftime", "Timeout" }
 local PHN = {
-    GameOver = "GAMEOVER", WinBoard = "WIN", Warmup = "WARMUP", Preparation = "PREP",
-    Freezetime = "FREEZE", RoundOver = "ROUND_END", Halftime = "HALFTIME", Timeout = "TIMEOUT",
-    Round = "LIVE", Vote = "VOTE",
+    GameOver = "终局", WinBoard = "胜利", Warmup = "热身", Preparation = "准备",
+    Freezetime = "冻结", RoundOver = "回合结束", Halftime = "中场", Timeout = "超时",
+    Round = "交战", Vote = "投票",
 }
 local function phase()
     for _, n in ipairs(PN) do
@@ -512,8 +505,9 @@ local function createESP(p)
     h.OutlineTransparency = 0
     h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     h.Adornee = c
+    pcall(function() h.Enabled = not C.CFG.Stealth end)
+    h.Parent = C._espFolder
     setHlVisible(h, not C.CFG.Stealth)
-    h.Parent = c
     return h
 end
 local function removeESP(p)
@@ -533,7 +527,7 @@ local function refreshESP()
             local hum = c and c:FindFirstChildOfClass("Humanoid")
             if c and hum and hum.Health > 0 then
                 local e = C._espCache[p]
-                if not e or not e.hl or e.hl.Parent ~= c then
+                if not e or not e.hl or not e.hl.Parent or e.hl.Adornee ~= c then
                     if e and e.hl then e.hl:Destroy() end
                     local h = createESP(p)
                     if h then C._espCache[p] = { hl = h, char = c } end
@@ -541,6 +535,7 @@ local function refreshESP()
                     local col = espColor(p)
                     e.hl.FillColor = col
                     e.hl.OutlineColor = col
+                    pcall(function() e.hl.Enabled = not C.CFG.Stealth end)
                     setHlVisible(e.hl, not C.CFG.Stealth)
                 end
             else
@@ -563,6 +558,10 @@ local DK = { "drone", "uav", "breacher", "explosion", "explosive", "kamikaze", "
 local SRN = "Destroyable"
 local HM = Color3.fromRGB(255, 210, 40)
 local HD = Color3.fromRGB(0, 230, 255)
+
+C._espFolder = Instance.new("Folder")
+C._espFolder.Name = "def_ESP_Holder"
+C._espFolder.Parent = CoreGui
 
 local lg = Instance.new("ScreenGui")
 lg.Name = "def_labels"
@@ -629,9 +628,10 @@ local function applyHL(i, color)
     e.color = color
     for _, a in ipairs(adornees(i)) do
         local h = e.hlList[a]
-        if h and h.Parent then
+        if h and h.Parent and h.Adornee == a then
             h.FillColor = color
             h.OutlineColor = color
+            pcall(function() h.Enabled = not C.CFG.Stealth end)
             setHlVisible(h, not C.CFG.Stealth)
         else
             h = Instance.new("Highlight")
@@ -642,8 +642,9 @@ local function applyHL(i, color)
             h.OutlineTransparency = 0
             h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
             h.Adornee = a
+            pcall(function() h.Enabled = not C.CFG.Stealth end)
+            h.Parent = C._espFolder
             setHlVisible(h, not C.CFG.Stealth)
-            h.Parent = a
             e.hlList[a] = h
         end
     end
@@ -776,7 +777,6 @@ local function antiFloat(dt)
     if inAir then
         C._air = C._air + dt
         if C._air > 0.5 and s ~= Enum.HumanoidStateType.Jumping then
-            h:ChangeState(Enum.HumanoidStateType.Running)
             local v = r.AssemblyLinearVelocity
             r.AssemblyLinearVelocity = Vector3.new(v.X, -5, v.Z)
             C._air = 0
@@ -881,7 +881,7 @@ end
 si(C.lp, "CameraMode", guardTP)
 si(C.lp, "CameraMaxZoomDistance", guardTP)
 si(C.lp, "CameraMinZoomDistance", guardTP)
-RunService.Stepped:Connect(guardTP)
+C._tpStep = RunService.Stepped:Connect(guardTP)
 C._tpBeat = RunService.Heartbeat:Connect(guardTP)
 C.lp.CharacterAdded:Connect(function()
     if C.CFG.ThirdPerson then
@@ -910,7 +910,7 @@ local function spin(dt)
     if not C.CFG.Spin then return end
     local mr = myRoot()
     if not mr or mr.Anchored then return end
-    local sign = (C.SPIN.Dir == "CCW") and -1 or 1
+    local sign = (C.SPIN.Dir == "逆时针") and -1 or 1
     C._spinAngle = (C._spinAngle + math.rad(C.SPIN.Speed) * dt * sign) % (math.pi * 2)
     local p = mr.Position
     local v = mr.AssemblyLinearVelocity
@@ -919,7 +919,7 @@ local function spin(dt)
 end
 
 local function targetKey(p)
-    return p.Name .. " [" .. tostring(team(p) or "UNK") .. "]"
+    return p.Name .. " [" .. tostring(team(p) or "无队伍") .. "]"
 end
 local function targetOptions()
     local t = {}
@@ -928,29 +928,29 @@ local function targetOptions()
             t[#t + 1] = targetKey(p)
         end
     end
-    if #t == 0 then t[1] = "NO TARGETS" end
+    if #t == 0 then t[1] = "暂无目标" end
     return t
 end
 
-local MainTab = Window:AddTab("RAGEBOT", "shield")
-local L = MainTab:AddLeftGroupbox("RAGE", "crosshair")
-local R = MainTab:AddRightGroupbox("MOVEMENT", "sliders-horizontal")
-local D2 = MainTab:AddLeftGroupbox("MISC", "shield-check")
-local V = MainTab:AddRightGroupbox("VISUALS", "eye")
+local MainTab = Window:AddTab("狂暴核心", "shield")
+local L = MainTab:AddLeftGroupbox("射击核心", "crosshair")
+local R = MainTab:AddRightGroupbox("机动", "sliders-horizontal")
+local D2 = MainTab:AddLeftGroupbox("反制", "shield-check")
+local V = MainTab:AddRightGroupbox("视觉", "eye")
 
 L:AddToggle("defEnable", {
-    Text = "RAGE / MASTER",
+    Text = "开火总控",
     Default = false,
     Callback = function(v) C.CFG.Enabled = v end,
 })
 L:AddToggle("defRay", {
-    Text = "VIS CHECK [LOS]",
+    Text = "视线判定",
     Default = false,
     Callback = function(v) C.CFG.RayCheck = v end,
 })
 
 C._targetSel = L:AddDropdown("defTargets", {
-    Text = "TARGET SEL",
+    Text = "目标清单",
     Values = targetOptions(),
     Default = {},
     Multi = true,
@@ -971,7 +971,7 @@ C._targetSel = L:AddDropdown("defTargets", {
 })
 
 L:AddToggle("defTargetOn", {
-    Text = "WHITELIST [ON]",
+    Text = "名单启用",
     Default = false,
     Callback = function(v)
         C._targetFilter = v
@@ -980,33 +980,33 @@ L:AddToggle("defTargetOn", {
 })
 
 L:AddToggle("defTeam", {
-    Text = "TEAM CHECK",
+    Text = "敌我识别",
     Default = false,
     Callback = function(v) C.CFG.TeamCheck = v end,
 })
 L:AddToggle("defBack", {
-    Text = "ANTI-AIM [BACK]",
+    Text = "反向瞄准",
     Default = false,
     Callback = function(v) C.CFG.BackTurn = v end,
 })
 
 L:AddDropdown("defSpinDir", {
-    Text = "SPINBOT / YAW",
-    Values = { "CW", "CCW" },
+    Text = "自旋方向",
+    Values = { "顺时针", "逆时针" },
     Default = 1,
     Multi = false,
     Callback = function(Value)
-        C.SPIN.Dir = (Value == "CCW") and "CCW" or "CW"
+        C.SPIN.Dir = (Value == "逆时针") and "逆时针" or "顺时针"
     end,
 })
 L:AddSlider("defSpinSpeed", {
-    Text = "SPINBOT / SPEED",
+    Text = "自旋速率",
     Default = C.SPIN.Speed,
     Min = 30, Max = 1080, Rounding = 0,
     Callback = function(v) C.SPIN.Speed = v end,
 })
 L:AddToggle("defSpin", {
-    Text = "SPINBOT / ENABLE",
+    Text = "自旋启用",
     Default = false,
     Callback = function(v)
         C.CFG.Spin = v
@@ -1015,7 +1015,7 @@ L:AddToggle("defSpin", {
 })
 
 D2:AddToggle("defMine", {
-    Text = "MINE ESP",
+    Text = "地雷标记",
     Default = false,
     Callback = function(v)
         C.CFG.MineESP = v
@@ -1027,31 +1027,32 @@ D2:AddToggle("defMine", {
     end,
 })
 D2:AddToggle("defDrone", {
-    Text = "DRONE RAGE [ALL]",
+    Text = "无人机清除",
     Default = false,
     Callback = function(v) C.CFG.AntiDrone = v end,
 })
 D2:AddToggle("defSmoke", {
-    Text = "SMOKE CHECK",
+    Text = "烟幕判定",
     Default = false,
     Callback = function(v) C.CFG.SmokeBlock = v end,
 })
 D2:AddToggle("defSpeed", {
-    Text = "SPEEDHACK",
+    Text = "速度破解",
     Default = false,
     Callback = function(v) C.CFG.MaxSpeed = v end,
 })
 
 V:AddToggle("defESP", {
-    Text = "PLAYER ESP [CHAMS]",
+    Text = "玩家透视",
     Default = false,
     Callback = function(v)
         C.CFG.ESP = v
-        refreshESP()
+        for p in pairs(C._espCache) do removeESP(p) end
+        if v then refreshESP() end
     end,
 })
 V:AddToggle("defTP", {
-    Text = "THIRDPERSON [OVR]",
+    Text = "越肩视角",
     Default = false,
     Callback = function(v)
         C.CFG.ThirdPerson = v
@@ -1059,12 +1060,12 @@ V:AddToggle("defTP", {
     end,
 })
 V:AddToggle("defTracer", {
-    Text = "TRACERS",
+    Text = "弹道可视",
     Default = false,
     Callback = function(v) C.CFG.Tracer = v end,
 })
 V:AddToggle("defHead", {
-    Text = "PITCH OVERRIDE",
+    Text = "俯仰锁定",
     Default = false,
     Callback = function(v)
         C.CFG.HeadCtrl = v
@@ -1072,12 +1073,12 @@ V:AddToggle("defHead", {
     end,
 })
 V:AddDropdown("defHeadMode", {
-    Text = "PITCH AXIS",
-    Values = { "UP [+1]", "DOWN [-1]" },
+    Text = "俯仰方向",
+    Values = { "抬头", "低头" },
     Default = 2,
     Multi = false,
     Callback = function(Value)
-        if Value == 1 or Value == "UP [+1]" or Value == "UP" then
+        if Value == 1 or Value == "抬头" then
             C.HEAD.Mode = "抬头"
         else
             C.HEAD.Mode = "低头"
@@ -1085,7 +1086,7 @@ V:AddDropdown("defHeadMode", {
     end,
 })
 V:AddToggle("defStealth", {
-    Text = "STREAMPROOF",
+    Text = "隐屏模式",
     Default = false,
     Callback = function(v)
         C.CFG.Stealth = v
@@ -1103,13 +1104,13 @@ V:AddToggle("defStealth", {
 })
 
 R:AddSlider("defWalkSpeed", {
-    Text = "WALKSPEED",
+    Text = "移动速率",
     Default = C.SPD.WalkSpeed,
     Min = 16, Max = 80, Rounding = 0,
     Callback = function(v) C.SPD.WalkSpeed = v end,
 })
 R:AddToggle("defAutoJump", {
-    Text = "AUTO BHOP",
+    Text = "自动连跳",
     Default = false,
     Callback = function(v)
         C.CFG.AutoJump = v
@@ -1119,7 +1120,7 @@ R:AddToggle("defAutoJump", {
     end,
 })
 R:AddSlider("defJumpGap", {
-    Text = "BHOP INTERVAL",
+    Text = "连跳间隔",
     Default = C.JUMP.Gap,
     Min = 0.1, Max = 2, Rounding = 1,
     Callback = function(v) C.JUMP.Gap = v end,
@@ -1138,11 +1139,11 @@ C._sl.BackgroundColor3 = Color3.fromRGB(10, 16, 24)
 C._sl.BackgroundTransparency = 0.2
 C._sl.BorderSizePixel = 0
 C._sl.TextColor3 = Color3.fromRGB(110, 235, 255)
-C._sl.Font = Enum.Font.Code
+C._sl.Font = Enum.Font.Gotham
 C._sl.TextSize = 12
 C._sl.TextXAlignment = Enum.TextXAlignment.Left
 C._sl.TextYAlignment = Enum.TextYAlignment.Top
-C._sl.Text = "RAGE // BOOT"
+C._sl.Text = "系统 // 初始化"
 C._sl.Parent = C._slGui
 Instance.new("UICorner", C._sl).CornerRadius = UDim.new(0, 8)
 
@@ -1190,7 +1191,7 @@ RunService.RenderStepped:Connect(function(dt)
     guardTP()
     if C.CFG.Spin then spin(dt) elseif C.CFG.BackTurn then backTurn() end
     C._espT = C._espT + dt
-    if C._espT >= 0.5 then
+    if C._espT >= 0.3 then
         C._espT = 0
         refreshESP()
     end
@@ -1200,27 +1201,27 @@ RunService.RenderStepped:Connect(function(dt)
         refreshTargetOptions()
     end
     local live = canFire()
-    local pn = phaseName() .. (C.CFG.AutoJump and live and " · BHOP" or "")
-    local aa = C.CFG.Spin and (C.SPIN.Dir .. " " .. C.SPIN.Speed) or "OFF"
-    local pit = C.CFG.HeadCtrl and ((C.HEAD.Mode == "抬头") and "UP" or "DOWN") or "OFF"
-    local wl = (C._targetFilter and "ON" or "OFF") .. " | PITCH " .. pit
+    local pn = phaseName() .. (C.CFG.AutoJump and live and " · 连跳" or "")
+    local aa = C.CFG.Spin and (C.SPIN.Dir .. " " .. C.SPIN.Speed) or "关"
+    local pit = C.CFG.HeadCtrl and C.HEAD.Mode or "关"
+    local wl = (C._targetFilter and "开" or "关") .. " | 俯仰 " .. pit
     if not C.CFG.Enabled then
-        setSl(string.format("RAGE // %s\nSTANDBY | ENT %d | SMK %d\nWL %s | AA %s",
+        setSl(string.format("系统 // %s\n待机 | 敌 %d | 烟 %d\n名单 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, wl, aa))
         return
     end
     if not live then
-        setSl(string.format("RAGE // %s\nHOLD [PHASE] | ENT %d | SMK %d\nWL %s | AA %s",
+        setSl(string.format("系统 // %s\n阶段锁定 | 敌 %d | 烟 %d\n名单 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, wl, aa))
         return
     end
     if not fireRemote() then
-        setSl("RAGE // LINK LOST")
+        setSl("系统 // 链路丢失")
         return
     end
     local t = target()
     if not t then
-        setSl(string.format("RAGE // %s\nNO LOCK | ENT %d | SMK %d\nWL %s | AA %s",
+        setSl(string.format("系统 // %s\n无锁定 | 敌 %d | 烟 %d\n名单 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, wl, aa))
         return
     end
@@ -1230,7 +1231,7 @@ RunService.RenderStepped:Connect(function(dt)
         C._lastFire = now
         fireAt(t)
     end
-    setSl(string.format("RAGE // %s\nLOCK %s %dm | ENT %d\nSMK %d | WL %s | AA %s",
+    setSl(string.format("系统 // %s\n锁定 %s %d米 | 敌 %d\n烟 %d | 名单 %s | 自旋 %s",
         pn, t.Player.Name, math.floor(t.Dist), countEnemy(), #C._smoke, wl, aa))
 end)
 
@@ -1257,6 +1258,7 @@ local function unload()
     C.CFG.HeadCtrl = false
     C.CFG.ThirdPerson = false
     if C._tpBeat then C._tpBeat:Disconnect(); C._tpBeat = nil end
+    if C._tpStep then C._tpStep:Disconnect(); C._tpStep = nil end
     C.CFG.AutoJump = false
     C._jumpT = 0
     C._jumpPend = 0
@@ -1281,6 +1283,7 @@ local function unload()
         end
     end
     if C._tracerFolder then C._tracerFolder:Destroy(); C._tracerFolder = nil end
+    if C._espFolder then C._espFolder:Destroy(); C._espFolder = nil end
     if lg then lg:Destroy() end
     if C._slGui then C._slGui:Destroy(); C._slGui = nil; C._sl = nil end
     if C._sound then C._sound:Destroy(); C._sound = nil end
