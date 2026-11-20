@@ -6,6 +6,7 @@ local Debris = game:GetService("Debris")
 local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CoreGui = game:GetService("CoreGui")
+local SoundService = game:GetService("SoundService")
 
 local C = {}
 C.genv = (type(getgenv) == "function") and getgenv() or _G
@@ -24,12 +25,12 @@ C.CFG = {
     BackTurn = false,
     MaxSpeed = true,
     Tracer = true,
-    AntiMine = true,
+    MineESP = true,
     AntiDrone = true,
     SmokeBlock = true,
     LookDown = false,
 }
-C.SPD = { WalkSpeed = 32, Accl = 2, JumpHeight = 8 }
+C.SPD = { WalkSpeed = 32, Accl = 2 }
 C._hip = nil
 C._lastFire = 0
 C._espT = 0
@@ -45,7 +46,9 @@ C._cr = nil
 C._tracerFolder = nil
 C._sl = nil
 C._slGui = nil
+C._sound = nil
 
+local FIRE_SOUND_ID = "rbxassetid://8679627751"
 local LOOK_DOWN_PITCH = -0.75
 local LOOK_SYNC_ID = "0R5lsPxqfSH3"
 
@@ -61,6 +64,26 @@ local function setSl(s)
     local lb = C._sl
     if not lb or not lb.Parent then return end
     pcall(function() lb.Text = s end)
+end
+
+local function ensureSound()
+    if C._sound and C._sound.Parent then return C._sound end
+    local s = Instance.new("Sound")
+    s.Name = "wlqx_fire"
+    s.SoundId = FIRE_SOUND_ID
+    s.Volume = 0.6
+    s.RollOffMode = Enum.RollOffMode.Inverse
+    s.Parent = SoundService
+    C._sound = s
+    return s
+end
+local function playFireSound()
+    local s = ensureSound()
+    if not s then return end
+    pcall(function()
+        s.TimePosition = 0
+        s:Play()
+    end)
 end
 
 local function hookLookSync()
@@ -395,6 +418,7 @@ local function fireAt(t)
     r:FireServer(v, w, false, false, v.cCF, v.hP, nil, nil)
     local mr = myRoot()
     trace(mr and mr.Position or cp, hp, 2)
+    playFireSound()
 end
 
 local function fireDrone(model, part)
@@ -416,6 +440,7 @@ local function fireDrone(model, part)
     r:FireServer(v, w, nil, false, nil, nil, nil, nil)
     local mr = myRoot()
     trace(mr and mr.Position or cp, hp, 2)
+    playFireSound()
 end
 
 local CTN = { "CT", "CounterTerrorist", "Counter-Terrorist", "Counter", "Police", "Blue", "CTs" }
@@ -633,7 +658,7 @@ local function unreg(i)
 end
 local function register(i, kind)
     if C._reg[i] or not i or not i.Parent then return end
-    if not C.CFG.AntiMine and kind == "mine" then return end
+    if not C.CFG.MineESP and kind == "mine" then return end
     if not C.CFG.AntiDrone and kind == "drone" then return end
     local a = anchorOf(i)
     if not a then return end
@@ -655,7 +680,7 @@ local function scanDestroy(dt)
             local kind = nil
             if mineName(c) then kind = "mine"
             elseif droneName(c) then kind = "drone" end
-            if kind and ((kind == "mine" and C.CFG.AntiMine) or (kind == "drone" and C.CFG.AntiDrone)) then
+            if kind and ((kind == "mine" and C.CFG.MineESP) or (kind == "drone" and C.CFG.AntiDrone)) then
                 seen[c] = true
                 if not C._reg[c] then
                     register(c, kind)
@@ -701,7 +726,6 @@ local function applySpeed()
     if not h then return end
     if C._hip == nil then C._hip = h.HipHeight end
     if h.WalkSpeed ~= C.SPD.WalkSpeed then h.WalkSpeed = C.SPD.WalkSpeed end
-    if h.JumpHeight ~= C.SPD.JumpHeight then h.JumpHeight = C.SPD.JumpHeight end
     if C._hip and h.HipHeight ~= C._hip then h.HipHeight = C._hip end
     local a = c:GetAttribute("Accl")
     if a ~= nil and a ~= C.SPD.Accl then c:SetAttribute("Accl", C.SPD.Accl) end
@@ -823,8 +847,15 @@ L:AddToggle("defBack", {
 })
 
 D2:AddToggle("defMine", {
-    Text = "防激光雷", Default = true,
-    Callback = function(v) C.CFG.AntiMine = v end,
+    Text = "透视激光雷", Default = true,
+    Callback = function(v)
+        C.CFG.MineESP = v
+        if not v then
+            for i, e in pairs(C._reg) do
+                if e.kind == "mine" then unreg(i) end
+            end
+        end
+    end,
 })
 D2:AddToggle("defDrone", {
     Text = "防无人机", Default = true,
@@ -870,16 +901,6 @@ R:AddSlider("defWalkSpeed", {
     Min = 16, Max = 80, Rounding = 0, Suffix = " ws",
     Callback = function(v) C.SPD.WalkSpeed = v end,
 })
-R:AddSlider("defJump", {
-    Text = "跳跃高度", Default = C.SPD.JumpHeight,
-    Min = 0, Max = 30, Rounding = 0,
-    Callback = function(v) C.SPD.JumpHeight = v end,
-})
-R:AddSlider("defAcc", {
-    Text = "加速度", Default = C.SPD.Accl,
-    Min = 0, Max = 10, Rounding = 1,
-    Callback = function(v) C.SPD.Accl = v end,
-})
 
 C._slGui = Instance.new("ScreenGui")
 C._slGui.Name = "defense_status"
@@ -919,8 +940,8 @@ RunService.RenderStepped:Connect(function(dt)
     end
     local ph = phase()
     if not C.CFG.Enabled then
-        setSl(string.format("阶段: %s | 目标: 0\n敌人: %d\n烟雾: %d\n防雷: %s | 防无人机: %s",
-            ph, countEnemy(), #C._smoke, C.CFG.AntiMine and "开" or "关", C.CFG.AntiDrone and "开" or "关"))
+        setSl(string.format("阶段: %s | 目标: 0\n敌人: %d\n烟雾: %d\n激光雷: %s | 防无人机: %s",
+            ph, countEnemy(), #C._smoke, C.CFG.MineESP and "开" or "关", C.CFG.AntiDrone and "开" or "关"))
         return
     end
     if not canFire() then
@@ -942,9 +963,9 @@ RunService.RenderStepped:Connect(function(dt)
         C._lastFire = now
         fireAt(t)
     end
-    setSl(string.format("阶段: %s | 目标: %s %.0fm\n敌人: %d\n烟雾: %d | 武器: %s\n防雷: %s | 防无人机: %s",
+    setSl(string.format("阶段: %s | 目标: %s %.0fm\n敌人: %d\n烟雾: %d | 武器: %s\n激光雷: %s | 防无人机: %s",
         ph, t.Player.Name, t.Dist, countEnemy(), #C._smoke, w and w.Name or "无",
-        C.CFG.AntiMine and "开" or "关", C.CFG.AntiDrone and "开" or "关"))
+        C.CFG.MineESP and "开" or "关", C.CFG.AntiDrone and "开" or "关"))
 end)
 
 applyTP(C.CFG.ThirdPerson)
@@ -954,6 +975,7 @@ local function unload()
     if C._tracerFolder then C._tracerFolder:Destroy(); C._tracerFolder = nil end
     if lg then lg:Destroy() end
     if C._slGui then C._slGui:Destroy(); C._slGui = nil; C._sl = nil end
+    if C._sound then C._sound:Destroy(); C._sound = nil end
     for p in pairs(C._espCache) do removeESP(p) end
     for i in pairs(C._reg) do unreg(i) end
 end
@@ -965,6 +987,7 @@ if GHub and GHub.RegisterModule then
         Unload = unload,
     })
 end
+
 
 return {
     Unload = unload,
