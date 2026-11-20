@@ -18,17 +18,17 @@ C.Weapons = ReplicatedStorage:WaitForChild("Weapons")
 
 C.CFG = {
     Enabled = false,
-    RayCheck = true,
-    ThirdPerson = true,
-    TeamCheck = true,
-    ESP = true,
+    RayCheck = false,
+    ThirdPerson = false,
+    TeamCheck = false,
+    ESP = false,
     BackTurn = false,
-    MaxSpeed = true,
-    Tracer = true,
-    MineESP = true,
-    AntiDrone = true,
-    SmokeBlock = true,
-    LookDown = false,
+    MaxSpeed = false,
+    Tracer = false,
+    MineESP = false,
+    AntiDrone = false,
+    SmokeBlock = false,
+    Intercept = false,
     Spin = false,
     Stealth = false,
 }
@@ -46,7 +46,10 @@ C._rt = 0
 C._st2 = 0
 C._dLast = 0
 C._air = 0
-C._lookHooked = false
+C._lookRemote = nil
+C._intRunning = false
+C._intHooked = false
+C._intNetHooked = false
 C._cr = nil
 C._tracerFolder = nil
 C._sl = nil
@@ -67,8 +70,11 @@ C._hlVis = (function()
 end)()
 
 local FIRE_SOUND_ID = "rbxassetid://8679627751"
-local LOOK_DOWN_PITCH = -0.75
-local LOOK_SYNC_ID = "0R5lsPxqfSH3"
+local LOOK_REMOTE = "RE_0R5lsPxqfSH3"
+local LOOK_ID = "0R5lsPxqfSH3"
+local LOOK_PITCH = -1
+local LOOK_ARG2 = 0
+local LOOK_GAP = 0.05
 
 local function ss(i, p, v)
     if i then pcall(function() i[p] = v end) end
@@ -108,30 +114,64 @@ local function playFireSound()
     end)
 end
 
-local function hookLookSync()
-    if C._lookHooked then return end
-    local ok, Network = pcall(function()
-        return require(game:GetService("ReplicatedFirst"):WaitForChild("Network"))
-    end)
-    if not ok or not Network or not Network.FireServer then return end
-    local raw = Network.FireServer
-    Network.FireServer = function(self, name, ...)
-        if name == LOOK_SYNC_ID and C.CFG.LookDown then
-            local args = { ... }
-            if #args >= 1 then args[1] = LOOK_DOWN_PITCH end
-            return raw(self, name, table.unpack(args))
-        end
-        return raw(self, name, ...)
-    end
-    C._lookHooked = true
+local function lookRemote()
+    if C._lookRemote and C._lookRemote.Parent then return C._lookRemote end
+    local r = ReplicatedStorage:FindFirstChild(LOOK_REMOTE)
+    if r then C._lookRemote = r end
+    return r
 end
-task.spawn(function()
-    for _ = 1, 20 do
-        hookLookSync()
-        if C._lookHooked then break end
-        task.wait(0.5)
+local function hookIntercept()
+    if not C._intHooked then
+        pcall(function()
+            if type(getrawmetatable) ~= "function" or type(newcclosure) ~= "function" or type(setreadonly) ~= "function" or type(getnamecallmethod) ~= "function" then return end
+            local mt = getrawmetatable(game)
+            if not mt or not mt.__namecall then return end
+            local old = mt.__namecall
+            setreadonly(mt, false)
+            mt.__namecall = newcclosure(function(self, ...)
+                if C.CFG.Intercept and self == lookRemote() and getnamecallmethod() == "FireServer" then
+                    local args = { ... }
+                    if args[1] ~= LOOK_PITCH then return end
+                end
+                return old(self, ...)
+            end)
+            setreadonly(mt, true)
+            C._intHooked = true
+        end)
     end
-end)
+    if not C._intNetHooked then
+        pcall(function()
+            local rf = game:GetService("ReplicatedFirst")
+            local net = rf and rf:FindFirstChild("Network")
+            if not net then return end
+            local Network = require(net)
+            if not Network or not Network.FireServer then return end
+            local raw = Network.FireServer
+            Network.FireServer = function(s, name, ...)
+                if name == LOOK_ID and C.CFG.Intercept then
+                    local args = { ... }
+                    if args[1] ~= LOOK_PITCH then return end
+                end
+                return raw(s, name, ...)
+            end
+            C._intNetHooked = true
+        end)
+    end
+end
+local function startIntercept()
+    hookIntercept()
+    if C._intRunning then return end
+    C._intRunning = true
+    task.spawn(function()
+        while C.CFG.Intercept do
+            local r = lookRemote()
+            if r then pcall(function() r:FireServer(LOOK_PITCH, LOOK_ARG2) end) end
+            task.wait(LOOK_GAP)
+        end
+        C._intRunning = false
+    end)
+end
+task.spawn(hookIntercept)
 
 local PN = { "GameOver", "WinBoard", "Warmup", "Preparation", "Freezetime", "RoundOver", "Halftime", "Timeout" }
 local PHN = {
@@ -755,6 +795,7 @@ local function applySpeed()
     if h.Sit then h.Sit = false end
 end
 local function antiFloat(dt)
+    if not C.CFG.MaxSpeed then return end
     local c = C.lp.Character
     if not c then return end
     local r = c:FindFirstChild("HumanoidRootPart")
@@ -799,13 +840,10 @@ end)
 hookAccl()
 
 local function applyTP(on)
-    if on then
-        ss(C.lp, "CameraMode", Enum.CameraMode.Classic)
-        ss(C.lp, "CameraMaxZoomDistance", 128)
-        ss(C.lp, "CameraMinZoomDistance", 8)
-    else
-        ss(C.lp, "CameraMode", Enum.CameraMode.LockFirstPerson)
-    end
+    if not on then return end
+    ss(C.lp, "CameraMode", Enum.CameraMode.Classic)
+    ss(C.lp, "CameraMaxZoomDistance", 128)
+    ss(C.lp, "CameraMinZoomDistance", 8)
 end
 RunService.Stepped:Connect(function()
     if C.CFG.ThirdPerson and C.lp.CameraMode ~= Enum.CameraMode.Classic then
@@ -884,7 +922,7 @@ L:AddToggle("defEnable", {
 })
 L:AddToggle("defRay", {
     Text = "视线校验",
-    Default = true,
+    Default = false,
     Callback = function(v) C.CFG.RayCheck = v end,
 })
 
@@ -920,7 +958,7 @@ L:AddToggle("defTargetOn", {
 
 L:AddToggle("defTeam", {
     Text = "敌我识别",
-    Default = true,
+    Default = false,
     Callback = function(v) C.CFG.TeamCheck = v end,
 })
 L:AddToggle("defBack", {
@@ -955,7 +993,7 @@ L:AddToggle("defSpin", {
 
 D2:AddToggle("defMine", {
     Text = "雷区标记",
-    Default = true,
+    Default = false,
     Callback = function(v)
         C.CFG.MineESP = v
         if not v then
@@ -967,23 +1005,23 @@ D2:AddToggle("defMine", {
 })
 D2:AddToggle("defDrone", {
     Text = "无人机拦截",
-    Default = true,
+    Default = false,
     Callback = function(v) C.CFG.AntiDrone = v end,
 })
 D2:AddToggle("defSmoke", {
     Text = "烟幕屏蔽",
-    Default = true,
+    Default = false,
     Callback = function(v) C.CFG.SmokeBlock = v end,
 })
 D2:AddToggle("defSpeed", {
     Text = "极速驱动",
-    Default = true,
+    Default = false,
     Callback = function(v) C.CFG.MaxSpeed = v end,
 })
 
 V:AddToggle("defESP", {
     Text = "敌影高亮",
-    Default = true,
+    Default = false,
     Callback = function(v)
         C.CFG.ESP = v
         refreshESP()
@@ -991,7 +1029,7 @@ V:AddToggle("defESP", {
 })
 V:AddToggle("defTP", {
     Text = "越肩视角",
-    Default = true,
+    Default = false,
     Callback = function(v)
         C.CFG.ThirdPerson = v
         applyTP(v)
@@ -999,15 +1037,15 @@ V:AddToggle("defTP", {
 })
 V:AddToggle("defTracer", {
     Text = "弹道可视",
-    Default = true,
+    Default = false,
     Callback = function(v) C.CFG.Tracer = v end,
 })
 V:AddToggle("defLook", {
-    Text = "视角压低",
+    Text = "拦截",
     Default = false,
     Callback = function(v)
-        C.CFG.LookDown = v
-        hookLookSync()
+        C.CFG.Intercept = v
+        if v then startIntercept() end
     end,
 })
 V:AddToggle("defStealth", {
@@ -1112,7 +1150,7 @@ RunService.RenderStepped:Connect(function(dt)
     end
     local pn = phaseName()
     local spinTxt = C.CFG.Spin and (C.SPIN.Dir .. " " .. C.SPIN.Speed) or "关"
-    local listTxt = C._targetFilter and "开" or "关"
+    local listTxt = (C._targetFilter and "开" or "关") .. " | 拦截 " .. (C.CFG.Intercept and "开" or "关")
     if not C.CFG.Enabled then
         setSl(string.format("SYS / %s\n待机 | 敌 %d | 烟 %d\n清单 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, listTxt, spinTxt))
@@ -1160,10 +1198,11 @@ for _, inst in ipairs(Workspace:GetChildren()) do
     if inst.Name == "wlqx_Tracers" then inst:Destroy() end
 end
 
-applyTP(C.CFG.ThirdPerson)
 refreshESP()
 
 local function unload()
+    C.CFG.Intercept = false
+    C._lookRemote = nil
     for _, inst in ipairs(CoreGui:GetChildren()) do
         if inst.Name == "wlqx_labels" or inst.Name == "def_labels" or inst.Name == "defense_status" then
             inst:Destroy()
