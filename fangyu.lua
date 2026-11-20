@@ -31,10 +31,13 @@ C.CFG = {
     HeadCtrl = false,
     Spin = false,
     Stealth = false,
+    AutoJump = false,
 }
 C.SPD = { WalkSpeed = 32, Accl = 2 }
 C.SPIN = { Dir = "顺时针", Speed = 180 }
 C.HEAD = { Mode = "低头" }
+C.JUMP = { Gap = 0.3 }
+C._jumpT = 0
 C._spinAngle = 0
 C._hip = nil
 C._lastFire = 0
@@ -759,7 +762,7 @@ local function applySpeed()
     if h.Sit then h.Sit = false end
 end
 local function antiFloat(dt)
-    if not C.CFG.MaxSpeed then return end
+    if not C.CFG.MaxSpeed or C.CFG.AutoJump then C._air = 0; return end
     local c = C.lp.Character
     if not c then return end
     local r = c:FindFirstChild("HumanoidRootPart")
@@ -778,6 +781,28 @@ local function antiFloat(dt)
         end
     else
         C._air = 0
+    end
+end
+local function autoJump(dt)
+    if not C.CFG.AutoJump then
+        C._jumpT = 0
+        return
+    end
+    local c = C.lp.Character
+    if not c then return end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    if not h or h.Health <= 0 then return end
+    if h.Sit or h.PlatformStand then return end
+    local s = h:GetState()
+    if s == Enum.HumanoidStateType.Jumping or s == Enum.HumanoidStateType.Freefall then
+        C._jumpT = 0
+        return
+    end
+    if s == Enum.HumanoidStateType.Seated or s == Enum.HumanoidStateType.Dead then return end
+    C._jumpT = C._jumpT + dt
+    if C._jumpT >= C.JUMP.Gap then
+        C._jumpT = 0
+        pcall(function() h.Jump = true end)
     end
 end
 local function hookAccl()
@@ -799,6 +824,7 @@ end
 C.lp.CharacterAdded:Connect(function()
     C._hip = nil
     C._spinAngle = 0
+    C._jumpT = 0
     hookAccl()
 end)
 hookAccl()
@@ -1049,6 +1075,20 @@ R:AddSlider("defWalkSpeed", {
     Min = 16, Max = 80, Rounding = 0,
     Callback = function(v) C.SPD.WalkSpeed = v end,
 })
+R:AddToggle("defAutoJump", {
+    Text = "自动跳跃",
+    Default = false,
+    Callback = function(v)
+        C.CFG.AutoJump = v
+        C._jumpT = 0
+    end,
+})
+R:AddSlider("defJumpGap", {
+    Text = "跳跃间隔",
+    Default = C.JUMP.Gap,
+    Min = 0.1, Max = 2, Rounding = 1,
+    Callback = function(v) C.JUMP.Gap = v end,
+})
 
 C._slGui = Instance.new("ScreenGui")
 C._slGui.Name = "defense_status"
@@ -1107,6 +1147,7 @@ end)
 
 RunService.RenderStepped:Connect(function(dt)
     applySpeed()
+    autoJump(dt)
     antiFloat(dt)
     tickIgnore(dt)
     scanDestroy(dt)
@@ -1125,7 +1166,7 @@ RunService.RenderStepped:Connect(function(dt)
         C._optT = 0
         refreshTargetOptions()
     end
-    local pn = phaseName()
+    local pn = phaseName() .. (C.CFG.AutoJump and " · 跃" or "")
     local spinTxt = C.CFG.Spin and (C.SPIN.Dir .. " " .. C.SPIN.Speed) or "关"
     local headTxt = C.CFG.HeadCtrl and C.HEAD.Mode or "关"
     local listTxt = (C._targetFilter and "开" or "关") .. " | 头控 " .. headTxt
@@ -1180,6 +1221,7 @@ refreshESP()
 
 local function unload()
     C.CFG.HeadCtrl = false
+    C.CFG.AutoJump = false
     C._lookRemote = nil
     for _, inst in ipairs(CoreGui:GetChildren()) do
         if inst.Name == "wlqx_labels" or inst.Name == "def_labels" or inst.Name == "defense_status" then
