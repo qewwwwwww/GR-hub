@@ -30,6 +30,7 @@ C.CFG = {
     SmokeBlock = true,
     LookDown = false,
     Spin = false,
+    Stealth = false,
 }
 C.SPD = { WalkSpeed = 32, Accl = 2 }
 C.SPIN = { Dir = "正转", Speed = 180 }
@@ -51,8 +52,6 @@ C._sl = nil
 C._slGui = nil
 C._sound = nil
 C._targetSel = nil
-C._targetBox = nil
-C._targetBtns = {}
 C._blockedTargets = {}
 
 local FIRE_SOUND_ID = "rbxassetid://8679627751"
@@ -370,6 +369,7 @@ local function randOff(r)
     return Vector3.new(math.cos(a) * d, (math.random() - 0.5) * r * 0.4, math.sin(a) * d)
 end
 local function trace(s, e, life)
+    if C.CFG.Stealth then return end
     if not C.CFG.Tracer or not s or not e then return end
     life = life or 2
     local sp = s + randOff(15)
@@ -484,6 +484,7 @@ local function createESP(p)
     h.OutlineTransparency = 0
     h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     h.Adornee = c
+    h.Visible = not C.CFG.Stealth
     h.Parent = c
     return h
 end
@@ -511,6 +512,7 @@ local function refreshESP()
                     local col = espColor(p)
                     e.hl.FillColor = col
                     e.hl.OutlineColor = col
+                    e.hl.Visible = not C.CFG.Stealth
                 end
             else
                 removeESP(p)
@@ -524,19 +526,6 @@ local function refreshESP()
         end
     end
 end
-local function hookChar(p)
-    p.CharacterAdded:Connect(function(c)
-        task.wait(0.3)
-        if C.CFG.ESP and p ~= C.lp then
-            removeESP(p)
-            local h = createESP(p)
-            if h then C._espCache[p] = { hl = h, char = c } end
-        end
-    end)
-end
-for _, p in ipairs(Players:GetPlayers()) do hookChar(p) end
-Players.PlayerAdded:Connect(hookChar)
-Players.PlayerRemoving:Connect(function(p) removeESP(p) end)
 
 local DMIN = 15
 local DMAX = 500
@@ -614,6 +603,7 @@ local function applyHL(i, color)
         if h and h.Parent then
             h.FillColor = color
             h.OutlineColor = color
+            h.Visible = not C.CFG.Stealth
         else
             h = Instance.new("Highlight")
             h.Name = "wlqx_hl"
@@ -623,6 +613,7 @@ local function applyHL(i, color)
             h.OutlineTransparency = 0
             h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
             h.Adornee = a
+            h.Visible = not C.CFG.Stealth
             h.Parent = a
             e.hlList[a] = h
         end
@@ -847,44 +838,18 @@ local function spin(dt)
     mr.AssemblyLinearVelocity = Vector3.new(0, mr.AssemblyLinearVelocity.Y, 0)
 end
 
-local function rebuildTargetBox()
-    local box = C._targetBox
-    if not box then return end
-    for _, b in ipairs(C._targetBtns) do
-        pcall(function() b:Destroy() end)
-    end
-    C._targetBtns = {}
-    local list = {}
+local function targetKey(p)
+    return (p.DisplayName or p.Name) .. " [" .. tostring(team(p) or "无队伍") .. "]"
+end
+local function targetOptions()
+    local t = {}
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= C.lp and valid(p) and enemy(p) then
-            table.insert(list, p)
+            t[#t + 1] = targetKey(p)
         end
     end
-    if #list == 0 then
-        local empty = box:AddLabel("当前无可选目标")
-        table.insert(C._targetBtns, empty)
-        return
-    end
-    for _, p in ipairs(list) do
-        local name = p.DisplayName or p.Name
-        local teamName = tostring(team(p) or "无队伍")
-        local btn = box:AddButton({
-            Text = string.format("%s  [%s]", name, teamName),
-            Callback = function(self)
-                if C._blockedTargets[p] then
-                    C._blockedTargets[p] = nil
-                    pcall(function() self:SetTextColor(Color3.fromRGB(230, 230, 230)) end)
-                else
-                    C._blockedTargets[p] = true
-                    pcall(function() self:SetTextColor(Color3.fromRGB(255, 90, 90)) end)
-                end
-            end,
-        })
-        table.insert(C._targetBtns, btn)
-        if C._blockedTargets[p] then
-            pcall(function() btn:SetTextColor(Color3.fromRGB(255, 90, 90)) end)
-        end
-    end
+    if #t == 0 then t[1] = "暂无目标" end
+    return t
 end
 
 local MainTab = Window:AddTab("防御", "shield")
@@ -906,24 +871,31 @@ L:AddToggle("defRay", {
 C._targetSel = L:AddDropdown("defTargets", {
     Text = "目标选择",
     MultipleOptions = true,
-    Options = { "点击刷新" },
+    Options = targetOptions(),
     Default = {},
-    Tooltip = "打开时刷新一次可选目标，点击取消勾选则不锁定该目标",
+    Tooltip = "不勾选任何项 = 攻击全部可攻击玩家；勾选则只攻击所选目标",
     Callback = function(values)
-        local opened = values and values["点击刷新"]
-        if opened then
-            task.defer(function()
-                rebuildTargetBox()
-                if C._targetSel then
-                    pcall(function() C._targetSel:SetValues({ "点击刷新" }) end)
-                    pcall(function() C._targetSel:SetValue({}) end)
+        local picked = {}
+        local has = false
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= C.lp then
+                local k = targetKey(p)
+                if values and values[k] then
+                    picked[p] = true
+                    has = true
                 end
-            end)
+            end
+        end
+        C._blockedTargets = {}
+        if has then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= C.lp and not picked[p] then
+                    C._blockedTargets[p] = true
+                end
+            end
         end
     end,
 })
-C._targetBox = MainTab:AddRightGroupbox("可选目标", "users")
-rebuildTargetBox()
 
 L:AddToggle("defTeam", {
     Text = "队伍检测", Default = true,
@@ -939,7 +911,10 @@ L:AddDropdown("defSpinDir", {
     Options = { "正转", "反转" },
     Default = "正转",
     Tooltip = "选择旋转方向，不受外部干扰",
-    Callback = function(v) C.SPIN.Dir = v end,
+    Callback = function(v)
+        if type(v) == "table" then v = v[1] end
+        C.SPIN.Dir = (v == "反转") and "反转" or "正转"
+    end,
 })
 L:AddSlider("defSpinSpeed", {
     Text = "旋转速度",
@@ -951,9 +926,7 @@ L:AddToggle("defSpin", {
     Text = "启用旋转", Default = false,
     Callback = function(v)
         C.CFG.Spin = v
-        if not v then
-            C._spinAngle = 0
-        end
+        if not v then C._spinAngle = 0 end
     end,
 })
 
@@ -1007,6 +980,24 @@ V:AddToggle("defLook", {
         hookLookSync()
     end,
 })
+V:AddToggle("defStealth", {
+    Text = "我不确定别人能不能看见",
+    Default = false,
+    Tooltip = "开启后隐藏所有本地视觉（ESP/能量线/透视/状态栏），功能仍在运行",
+    Callback = function(v)
+        C.CFG.Stealth = v
+        if lg then lg.Enabled = not v end
+        if C._slGui then C._slGui.Enabled = not v end
+        for _, e in pairs(C._espCache) do
+            if e.hl then e.hl.Visible = not v end
+        end
+        for _, e in pairs(C._reg) do
+            for _, h in pairs(e.hlList) do
+                if h then h.Visible = not v end
+            end
+        end
+    end,
+})
 
 R:AddSlider("defWalkSpeed", {
     Text = "移速值", Default = C.SPD.WalkSpeed,
@@ -1034,6 +1025,32 @@ C._sl.TextYAlignment = Enum.TextYAlignment.Top
 C._sl.Text = "目标: 0"
 C._sl.Parent = C._slGui
 Instance.new("UICorner", C._sl).CornerRadius = UDim.new(0, 8)
+
+local function refreshTargetOptions()
+    if not C._targetSel then return end
+    pcall(function() C._targetSel:SetValues(targetOptions()) end)
+end
+
+local function hookChar(p)
+    p.CharacterAdded:Connect(function(c)
+        task.wait(0.3)
+        if C.CFG.ESP and p ~= C.lp then
+            removeESP(p)
+            local h = createESP(p)
+            if h then C._espCache[p] = { hl = h, char = c } end
+        end
+    end)
+end
+for _, p in ipairs(Players:GetPlayers()) do hookChar(p) end
+Players.PlayerAdded:Connect(function(p)
+    hookChar(p)
+    task.delay(1, refreshTargetOptions)
+end)
+Players.PlayerRemoving:Connect(function(p)
+    removeESP(p)
+    C._blockedTargets[p] = nil
+    task.delay(0.5, refreshTargetOptions)
+end)
 
 RunService.RenderStepped:Connect(function(dt)
     applySpeed()
