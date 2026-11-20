@@ -29,8 +29,11 @@ C.CFG = {
     AntiDrone = true,
     SmokeBlock = true,
     LookDown = false,
+    Spin = false,
 }
 C.SPD = { WalkSpeed = 32, Accl = 2 }
+C.SPIN = { Dir = "正转", Speed = 180 }
+C._spinAngle = 0
 C._hip = nil
 C._lastFire = 0
 C._espT = 0
@@ -47,6 +50,10 @@ C._tracerFolder = nil
 C._sl = nil
 C._slGui = nil
 C._sound = nil
+C._targetSel = nil
+C._targetBox = nil
+C._targetBtns = {}
+C._blockedTargets = {}
 
 local FIRE_SOUND_ID = "rbxassetid://8679627751"
 local LOOK_DOWN_PITCH = -0.75
@@ -320,7 +327,11 @@ local function scan()
 end
 local function target()
     local n, v = scan()
-    if C.CFG.RayCheck then return v end
+    if C.CFG.RayCheck then
+        if v and C._blockedTargets[v.Player] then v = nil end
+        return v
+    end
+    if n and C._blockedTargets[n.Player] then n = nil end
     return n
 end
 local function countEnemy()
@@ -697,7 +708,7 @@ local function scanDestroy(dt)
     end
 end
 local function tryDrone()
-    if not C.CFG.Enabled or not C.CFG.AntiDrone or not canFire() then return end
+    if not C.CFG.Enabled or not C.CFG.AntiDrone then return end
     local now = tick()
     local mr = myRoot()
     if not mr then return end
@@ -771,6 +782,7 @@ local function hookAccl()
 end
 C.lp.CharacterAdded:Connect(function()
     C._hip = nil
+    C._spinAngle = 0
     hookAccl()
 end)
 hookAccl()
@@ -822,8 +834,61 @@ local function backTurn()
     mr.CFrame = CFrame.new(mp) * CFrame.lookAt(mp, mp + fb).Rotation
 end
 
+local function spin(dt)
+    if not C.CFG.Spin then return end
+    local mr = myRoot()
+    if not mr or mr.Anchored then return end
+    local sign = (C.SPIN.Dir == "反转") and -1 or 1
+    C._spinAngle = (C._spinAngle + math.rad(C.SPIN.Speed) * dt * sign) % (math.pi * 2)
+    local pos = mr.Position
+    local rot = CFrame.Angles(0, C._spinAngle, 0)
+    mr.CFrame = CFrame.new(pos) * rot
+    mr.AssemblyAngularVelocity = Vector3.zero
+    mr.AssemblyLinearVelocity = Vector3.new(0, mr.AssemblyLinearVelocity.Y, 0)
+end
+
+local function rebuildTargetBox()
+    local box = C._targetBox
+    if not box then return end
+    for _, b in ipairs(C._targetBtns) do
+        pcall(function() b:Destroy() end)
+    end
+    C._targetBtns = {}
+    local list = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= C.lp and valid(p) and enemy(p) then
+            table.insert(list, p)
+        end
+    end
+    if #list == 0 then
+        local empty = box:AddLabel("当前无可选目标")
+        table.insert(C._targetBtns, empty)
+        return
+    end
+    for _, p in ipairs(list) do
+        local name = p.DisplayName or p.Name
+        local teamName = tostring(team(p) or "无队伍")
+        local btn = box:AddButton({
+            Text = string.format("%s  [%s]", name, teamName),
+            Callback = function(self)
+                if C._blockedTargets[p] then
+                    C._blockedTargets[p] = nil
+                    pcall(function() self:SetTextColor(Color3.fromRGB(230, 230, 230)) end)
+                else
+                    C._blockedTargets[p] = true
+                    pcall(function() self:SetTextColor(Color3.fromRGB(255, 90, 90)) end)
+                end
+            end,
+        })
+        table.insert(C._targetBtns, btn)
+        if C._blockedTargets[p] then
+            pcall(function() btn:SetTextColor(Color3.fromRGB(255, 90, 90)) end)
+        end
+    end
+end
+
 local MainTab = Window:AddTab("防御", "shield")
-local L = MainTab:AddLeftGroupbox("战斗", "crosshair")
+local L = MainTab:AddLeftGroupbox("ragebot", "crosshair")
 local R = MainTab:AddRightGroupbox("参数", "sliders-horizontal")
 local D2 = MainTab:AddLeftGroupbox("防御", "shield-check")
 local V = MainTab:AddRightGroupbox("视觉", "eye")
@@ -837,6 +902,29 @@ L:AddToggle("defRay", {
     Text = "射线检测", Default = true,
     Callback = function(v) C.CFG.RayCheck = v end,
 })
+
+C._targetSel = L:AddDropdown("defTargets", {
+    Text = "目标选择",
+    MultipleOptions = true,
+    Options = { "点击刷新" },
+    Default = {},
+    Tooltip = "打开时刷新一次可选目标，点击取消勾选则不锁定该目标",
+    Callback = function(values)
+        local opened = values and values["点击刷新"]
+        if opened then
+            task.defer(function()
+                rebuildTargetBox()
+                if C._targetSel then
+                    pcall(function() C._targetSel:SetValues({ "点击刷新" }) end)
+                    pcall(function() C._targetSel:SetValue({}) end)
+                end
+            end)
+        end
+    end,
+})
+C._targetBox = MainTab:AddRightGroupbox("可选目标", "users")
+rebuildTargetBox()
+
 L:AddToggle("defTeam", {
     Text = "队伍检测", Default = true,
     Callback = function(v) C.CFG.TeamCheck = v end,
@@ -844,6 +932,29 @@ L:AddToggle("defTeam", {
 L:AddToggle("defBack", {
     Text = "背身单打", Default = false,
     Callback = function(v) C.CFG.BackTurn = v end,
+})
+
+L:AddDropdown("defSpinDir", {
+    Text = "旋转",
+    Options = { "正转", "反转" },
+    Default = "正转",
+    Tooltip = "选择旋转方向，不受外部干扰",
+    Callback = function(v) C.SPIN.Dir = v end,
+})
+L:AddSlider("defSpinSpeed", {
+    Text = "旋转速度",
+    Default = C.SPIN.Speed,
+    Min = 30, Max = 1080, Rounding = 0, Suffix = " °/s",
+    Callback = function(v) C.SPIN.Speed = v end,
+})
+L:AddToggle("defSpin", {
+    Text = "启用旋转", Default = false,
+    Callback = function(v)
+        C.CFG.Spin = v
+        if not v then
+            C._spinAngle = 0
+        end
+    end,
 })
 
 D2:AddToggle("defMine", {
@@ -859,6 +970,7 @@ D2:AddToggle("defMine", {
 })
 D2:AddToggle("defDrone", {
     Text = "防无人机", Default = true,
+    Tooltip = "任何阶段都会自动打无人机",
     Callback = function(v) C.CFG.AntiDrone = v end,
 })
 D2:AddToggle("defSmoke", {
@@ -933,6 +1045,7 @@ RunService.RenderStepped:Connect(function(dt)
         ss(C.lp, "CameraMode", Enum.CameraMode.Classic)
     end
     if C.CFG.BackTurn then backTurn() end
+    if C.CFG.Spin then spin(dt) end
     C._espT = C._espT + dt
     if C._espT >= 0.5 then
         C._espT = 0
@@ -940,8 +1053,9 @@ RunService.RenderStepped:Connect(function(dt)
     end
     local ph = phase()
     if not C.CFG.Enabled then
-        setSl(string.format("阶段: %s | 目标: 0\n敌人: %d\n烟雾: %d\n激光雷: %s | 防无人机: %s",
-            ph, countEnemy(), #C._smoke, C.CFG.MineESP and "开" or "关", C.CFG.AntiDrone and "开" or "关"))
+        setSl(string.format("阶段: %s | 目标: 0\n敌人: %d\n烟雾: %d\n激光雷: %s | 防无人机: %s\n旋转: %s %s°/s",
+            ph, countEnemy(), #C._smoke, C.CFG.MineESP and "开" or "关", C.CFG.AntiDrone and "开" or "关",
+            C.CFG.Spin and C.SPIN.Dir or "关", C.CFG.Spin and C.SPIN.Speed or 0))
         return
     end
     if not canFire() then
@@ -987,7 +1101,6 @@ if GHub and GHub.RegisterModule then
         Unload = unload,
     })
 end
-
 
 return {
     Unload = unload,
