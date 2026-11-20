@@ -34,9 +34,9 @@ C.CFG = {
     AutoJump = false,
 }
 C.SPD = { WalkSpeed = 32, Accl = 2 }
-C.SPIN = { Dir = "顺时针", Speed = 180 }
+C.SPIN = { Dir = "正转", Speed = 180 }
 C.HEAD = { Mode = "低头" }
-C.JUMP = { Gap = 0.3 }
+C.JUMP = { Gap = 0.1 }
 C._jumpT = 0
 C._jumpPend = 0
 C._jumpArmed = false
@@ -63,6 +63,7 @@ C._sound = nil
 C._targetSel = nil
 C._blockedTargets = {}
 C._targetFilter = false
+C._droneShot = {}
 
 
 local FIRE_SOUND_ID = "rbxassetid://8679627751"
@@ -270,11 +271,8 @@ local function rebuildSmoke()
     local l = {}
     for _, d in ipairs(Workspace:GetDescendants()) do
         if d:IsA("BasePart") and smokeName(d) then
-            local ok, t = pcall(function() return d.Transparency end)
-            if ok and t and t < 0.98 then
-                local r = math.max(d.Size.X, d.Size.Y, d.Size.Z) * 0.5
-                if r >= 1 then l[#l + 1] = { part = d, radius = r } end
-            end
+            local r = math.max(d.Size.X, d.Size.Y, d.Size.Z) * 0.5
+            l[#l + 1] = { part = d, radius = math.max(r, 1) }
         end
     end
     C._smoke = l
@@ -305,6 +303,14 @@ local function tickIgnore(dt)
     end
 end
 
+local function nearTarget(inst, point)
+    local ok, inside = pcall(function()
+        local rel = inst.CFrame:ToObjectSpace(CFrame.new(point)).Position
+        local hs = inst.Size * 0.5
+        return math.abs(rel.X) <= hs.X + 2 and math.abs(rel.Y) <= hs.Y + 2 and math.abs(rel.Z) <= hs.Z + 2
+    end)
+    return ok and inside
+end
 local function los(a, b)
     if smokeBlock(a, b) then return false end
     local d = b - a
@@ -320,13 +326,19 @@ local function los(a, b)
         if not res then return true end
         if (res.Position - b).Magnitude < 1.5 then return true end
         local inst = res.Instance
-        if inst.CanCollide then return false end
-        if smokeName(inst) then return false end
-        local ok, tr = pcall(function() return inst.Transparency end)
-        if not ok or tr == nil or tr < 0.85 then return false end
-        local st = (res.Position - cur).Magnitude + 0.15
-        cur = cur + u * st
-        rem = rem - st
+        if nearTarget(inst, b) then
+            local st = (res.Position - cur).Magnitude + 0.15
+            cur = cur + u * st
+            rem = rem - st
+        else
+            if inst.CanCollide then return false end
+            if smokeName(inst) then return false end
+            local ok, tr = pcall(function() return inst.Transparency end)
+            if not ok or tr == nil or tr < 0.85 then return false end
+            local st = (res.Position - cur).Magnitude + 0.15
+            cur = cur + u * st
+            rem = rem - st
+        end
     end
     return true
 end
@@ -340,7 +352,7 @@ local function scan()
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= C.lp and valid(p) and enemy(p) and not (C._targetFilter and C._blockedTargets[p]) then
             local part, pos = tpart(p)
-            if part then
+            if part and not smokeBlock(mp, pos) then
                 local d = (pos - mp).Magnitude
                 if d < nd then nd = d; near = { Player = p, Part = part, Pos = pos, Dist = d } end
                 if d < vd and los(mp, pos) then vd = d; vis = { Player = p, Part = part, Pos = pos, Dist = d } end
@@ -687,6 +699,7 @@ local function unreg(i)
         if e.label then e.label:Destroy(); e.label = nil end
     end
     C._reg[i] = nil
+    C._droneShot[i] = nil
 end
 local function register(i, kind)
     if C._reg[i] or not i or not i.Parent then return end
@@ -744,9 +757,12 @@ local function tryDrone()
         end
     end
     if not bp or not bi then return end
+    local last = C._droneShot[bi]
+    if last and now - last < 3 then return end
     local w = curWeapon()
     if not w or now - C._dLast < fireRate(w) then return end
     C._dLast = now
+    C._droneShot[bi] = now
     fireDrone(bi, bp)
 end
 
@@ -910,7 +926,7 @@ local function spin(dt)
     if not C.CFG.Spin then return end
     local mr = myRoot()
     if not mr or mr.Anchored then return end
-    local sign = (C.SPIN.Dir == "逆时针") and -1 or 1
+    local sign = (C.SPIN.Dir == "反转") and -1 or 1
     C._spinAngle = (C._spinAngle + math.rad(C.SPIN.Speed) * dt * sign) % (math.pi * 2)
     local p = mr.Position
     local v = mr.AssemblyLinearVelocity
@@ -932,25 +948,25 @@ local function targetOptions()
     return t
 end
 
-local MainTab = Window:AddTab("狂暴核心", "shield")
-local L = MainTab:AddLeftGroupbox("射击核心", "crosshair")
-local R = MainTab:AddRightGroupbox("机动", "sliders-horizontal")
-local D2 = MainTab:AddLeftGroupbox("反制", "shield-check")
+local MainTab = Window:AddTab("防御", "shield")
+local L = MainTab:AddLeftGroupbox("ragebot", "crosshair")
+local R = MainTab:AddRightGroupbox("本地", "sliders-horizontal")
+local D2 = MainTab:AddLeftGroupbox("防御", "shield-check")
 local V = MainTab:AddRightGroupbox("视觉", "eye")
 
 L:AddToggle("defEnable", {
-    Text = "开火总控",
+    Text = "自动射击",
     Default = false,
     Callback = function(v) C.CFG.Enabled = v end,
 })
 L:AddToggle("defRay", {
-    Text = "视线判定",
+    Text = "射线检测",
     Default = false,
     Callback = function(v) C.CFG.RayCheck = v end,
 })
 
 C._targetSel = L:AddDropdown("defTargets", {
-    Text = "目标清单",
+    Text = "目标选择",
     Values = targetOptions(),
     Default = {},
     Multi = true,
@@ -971,7 +987,7 @@ C._targetSel = L:AddDropdown("defTargets", {
 })
 
 L:AddToggle("defTargetOn", {
-    Text = "名单启用",
+    Text = "攻击选择目标",
     Default = false,
     Callback = function(v)
         C._targetFilter = v
@@ -985,28 +1001,28 @@ L:AddToggle("defTeam", {
     Callback = function(v) C.CFG.TeamCheck = v end,
 })
 L:AddToggle("defBack", {
-    Text = "反向瞄准",
+    Text = "背身",
     Default = false,
     Callback = function(v) C.CFG.BackTurn = v end,
 })
 
 L:AddDropdown("defSpinDir", {
-    Text = "自旋方向",
-    Values = { "顺时针", "逆时针" },
+    Text = "选择方向",
+    Values = { "正转", "反转" },
     Default = 1,
     Multi = false,
     Callback = function(Value)
-        C.SPIN.Dir = (Value == "逆时针") and "逆时针" or "顺时针"
+        C.SPIN.Dir = (Value == "反转") and "反转" or "正转"
     end,
 })
 L:AddSlider("defSpinSpeed", {
-    Text = "自旋速率",
+    Text = "旋转速度",
     Default = C.SPIN.Speed,
     Min = 30, Max = 1080, Rounding = 0,
     Callback = function(v) C.SPIN.Speed = v end,
 })
 L:AddToggle("defSpin", {
-    Text = "自旋启用",
+    Text = "启动旋转",
     Default = false,
     Callback = function(v)
         C.CFG.Spin = v
@@ -1015,7 +1031,7 @@ L:AddToggle("defSpin", {
 })
 
 D2:AddToggle("defMine", {
-    Text = "地雷标记",
+    Text = "透视激光地雷",
     Default = false,
     Callback = function(v)
         C.CFG.MineESP = v
@@ -1027,7 +1043,7 @@ D2:AddToggle("defMine", {
     end,
 })
 D2:AddToggle("defDrone", {
-    Text = "无人机清除",
+    Text = "射击攻击无人机",
     Default = false,
     Callback = function(v) C.CFG.AntiDrone = v end,
 })
@@ -1037,7 +1053,7 @@ D2:AddToggle("defSmoke", {
     Callback = function(v) C.CFG.SmokeBlock = v end,
 })
 D2:AddToggle("defSpeed", {
-    Text = "速度破解",
+    Text = "移速",
     Default = false,
     Callback = function(v) C.CFG.MaxSpeed = v end,
 })
@@ -1052,7 +1068,7 @@ V:AddToggle("defESP", {
     end,
 })
 V:AddToggle("defTP", {
-    Text = "越肩视角",
+    Text = "第三人称",
     Default = false,
     Callback = function(v)
         C.CFG.ThirdPerson = v
@@ -1060,12 +1076,12 @@ V:AddToggle("defTP", {
     end,
 })
 V:AddToggle("defTracer", {
-    Text = "弹道可视",
+    Text = "弹道特效",
     Default = false,
     Callback = function(v) C.CFG.Tracer = v end,
 })
 V:AddToggle("defHead", {
-    Text = "俯仰锁定",
+    Text = "头部控制（我不确定别人是否可以看见）",
     Default = false,
     Callback = function(v)
         C.CFG.HeadCtrl = v
@@ -1073,7 +1089,7 @@ V:AddToggle("defHead", {
     end,
 })
 V:AddDropdown("defHeadMode", {
-    Text = "俯仰方向",
+    Text = "角度",
     Values = { "抬头", "低头" },
     Default = 2,
     Multi = false,
@@ -1085,26 +1101,8 @@ V:AddDropdown("defHeadMode", {
         end
     end,
 })
-V:AddToggle("defStealth", {
-    Text = "隐屏模式",
-    Default = false,
-    Callback = function(v)
-        C.CFG.Stealth = v
-        if lg then lg.Enabled = not v end
-        if C._slGui then C._slGui.Enabled = not v end
-        for _, e in pairs(C._espCache) do
-            setHlVisible(e.hl, not v)
-        end
-        for _, e in pairs(C._reg) do
-            for _, h in pairs(e.hlList) do
-                setHlVisible(h, not v)
-            end
-        end
-    end,
-})
-
 R:AddSlider("defWalkSpeed", {
-    Text = "移动速率",
+    Text = "移速调整",
     Default = C.SPD.WalkSpeed,
     Min = 16, Max = 80, Rounding = 0,
     Callback = function(v) C.SPD.WalkSpeed = v end,
