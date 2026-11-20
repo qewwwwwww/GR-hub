@@ -28,12 +28,13 @@ C.CFG = {
     MineESP = false,
     AntiDrone = false,
     SmokeBlock = false,
-    Intercept = false,
+    HeadCtrl = false,
     Spin = false,
     Stealth = false,
 }
 C.SPD = { WalkSpeed = 32, Accl = 2 }
 C.SPIN = { Dir = "顺时针", Speed = 180 }
+C.HEAD = { Mode = "低头" }
 C._spinAngle = 0
 C._hip = nil
 C._lastFire = 0
@@ -48,8 +49,6 @@ C._dLast = 0
 C._air = 0
 C._lookRemote = nil
 C._intRunning = false
-C._intHooked = false
-C._intNetHooked = false
 C._cr = nil
 C._tracerFolder = nil
 C._sl = nil
@@ -71,10 +70,13 @@ end)()
 
 local FIRE_SOUND_ID = "rbxassetid://8679627751"
 local LOOK_REMOTE = "RE_0R5lsPxqfSH3"
-local LOOK_ID = "0R5lsPxqfSH3"
-local LOOK_PITCH = -1
+local HEAD_UP = 1
+local HEAD_DOWN = -1
 local LOOK_ARG2 = 0
-local LOOK_GAP = 0.05
+local LOOK_GAP = 0.1
+local function headPitch()
+    return (C.HEAD.Mode == "抬头") and HEAD_UP or HEAD_DOWN
+end
 
 local function ss(i, p, v)
     if i then pcall(function() i[p] = v end) end
@@ -120,58 +122,20 @@ local function lookRemote()
     if r then C._lookRemote = r end
     return r
 end
-local function hookIntercept()
-    if not C._intHooked then
-        pcall(function()
-            if type(getrawmetatable) ~= "function" or type(newcclosure) ~= "function" or type(setreadonly) ~= "function" or type(getnamecallmethod) ~= "function" then return end
-            local mt = getrawmetatable(game)
-            if not mt or not mt.__namecall then return end
-            local old = mt.__namecall
-            setreadonly(mt, false)
-            mt.__namecall = newcclosure(function(self, ...)
-                if C.CFG.Intercept and self == lookRemote() and getnamecallmethod() == "FireServer" then
-                    local args = { ... }
-                    if args[1] ~= LOOK_PITCH then return end
-                end
-                return old(self, ...)
-            end)
-            setreadonly(mt, true)
-            C._intHooked = true
-        end)
-    end
-    if not C._intNetHooked then
-        pcall(function()
-            local rf = game:GetService("ReplicatedFirst")
-            local net = rf and rf:FindFirstChild("Network")
-            if not net then return end
-            local Network = require(net)
-            if not Network or not Network.FireServer then return end
-            local raw = Network.FireServer
-            Network.FireServer = function(s, name, ...)
-                if name == LOOK_ID and C.CFG.Intercept then
-                    local args = { ... }
-                    if args[1] ~= LOOK_PITCH then return end
-                end
-                return raw(s, name, ...)
-            end
-            C._intNetHooked = true
-        end)
-    end
-end
-local function startIntercept()
-    hookIntercept()
+local function startHeadCtrl()
     if C._intRunning then return end
     C._intRunning = true
     task.spawn(function()
-        while C.CFG.Intercept do
+        while C.CFG.HeadCtrl do
             local r = lookRemote()
-            if r then pcall(function() r:FireServer(LOOK_PITCH, LOOK_ARG2) end) end
+            if r then
+                pcall(function() r:FireServer(headPitch(), LOOK_ARG2) end)
+            end
             task.wait(LOOK_GAP)
         end
         C._intRunning = false
     end)
 end
-task.spawn(hookIntercept)
 
 local PN = { "GameOver", "WinBoard", "Warmup", "Preparation", "Freezetime", "RoundOver", "Halftime", "Timeout" }
 local PHN = {
@@ -1040,12 +1004,25 @@ V:AddToggle("defTracer", {
     Default = false,
     Callback = function(v) C.CFG.Tracer = v end,
 })
-V:AddToggle("defLook", {
-    Text = "拦截",
+V:AddToggle("defHead", {
+    Text = "头部控制",
     Default = false,
     Callback = function(v)
-        C.CFG.Intercept = v
-        if v then startIntercept() end
+        C.CFG.HeadCtrl = v
+        if v then startHeadCtrl() end
+    end,
+})
+V:AddDropdown("defHeadMode", {
+    Text = "头部方向",
+    Values = { "抬头", "低头" },
+    Default = 2,
+    Multi = false,
+    Callback = function(Value)
+        if Value == 1 or Value == "抬头" then
+            C.HEAD.Mode = "抬头"
+        else
+            C.HEAD.Mode = "低头"
+        end
     end,
 })
 V:AddToggle("defStealth", {
@@ -1150,7 +1127,8 @@ RunService.RenderStepped:Connect(function(dt)
     end
     local pn = phaseName()
     local spinTxt = C.CFG.Spin and (C.SPIN.Dir .. " " .. C.SPIN.Speed) or "关"
-    local listTxt = (C._targetFilter and "开" or "关") .. " | 拦截 " .. (C.CFG.Intercept and "开" or "关")
+    local headTxt = C.CFG.HeadCtrl and C.HEAD.Mode or "关"
+    local listTxt = (C._targetFilter and "开" or "关") .. " | 头控 " .. headTxt
     if not C.CFG.Enabled then
         setSl(string.format("SYS / %s\n待机 | 敌 %d | 烟 %d\n清单 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, listTxt, spinTxt))
@@ -1201,7 +1179,7 @@ end
 refreshESP()
 
 local function unload()
-    C.CFG.Intercept = false
+    C.CFG.HeadCtrl = false
     C._lookRemote = nil
     for _, inst in ipairs(CoreGui:GetChildren()) do
         if inst.Name == "wlqx_labels" or inst.Name == "def_labels" or inst.Name == "defense_status" then
