@@ -40,6 +40,7 @@ C._spinBaseC0 = nil
 C._hip = nil
 C._lastFire = 0
 C._espT = 0
+C._optT = 0
 C._espCache = {}
 C._reg = {}
 C._smoke = {}
@@ -879,7 +880,7 @@ local function spin(dt)
 end
 
 local function targetKey(p)
-    return (p.DisplayName or p.Name) .. " [" .. tostring(team(p) or "无队伍") .. "]"
+    return p.Name .. " [" .. tostring(team(p) or "无队伍") .. "]"
 end
 local function targetOptions()
     local t = {}
@@ -915,20 +916,11 @@ C._targetSel = L:AddDropdown("defTargets", {
     Multi = true,
     Tooltip = "不勾选任何项 = 攻击全部可攻击玩家；勾选则只打所选",
     Callback = function(Values)
-        local picked, has = {}, false
+        C._blockedTargets = {}
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= C.lp then
                 local k = targetKey(p)
-                if Values and Values[k] then
-                    picked[p] = true
-                    has = true
-                end
-            end
-        end
-        C._blockedTargets = {}
-        if has then
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= C.lp and not picked[p] then
+                if not (Values and Values[k]) then
                     C._blockedTargets[p] = true
                 end
             end
@@ -1074,7 +1066,17 @@ Instance.new("UICorner", C._sl).CornerRadius = UDim.new(0, 8)
 
 local function refreshTargetOptions()
     if not C._targetSel then return end
+    local keep = {}
+    pcall(function()
+        local v = C._targetSel.Value
+        if type(v) == "table" then
+            for k, on in pairs(v) do
+                if on then keep[k] = true end
+            end
+        end
+    end)
     pcall(function() C._targetSel:SetValues(targetOptions()) end)
+    pcall(function() C._targetSel:SetValue(keep) end)
 end
 
 local function hookChar(p)
@@ -1090,12 +1092,10 @@ end
 for _, p in ipairs(Players:GetPlayers()) do hookChar(p) end
 Players.PlayerAdded:Connect(function(p)
     hookChar(p)
-    task.delay(1, refreshTargetOptions)
 end)
 Players.PlayerRemoving:Connect(function(p)
     removeESP(p)
     C._blockedTargets[p] = nil
-    task.delay(0.5, refreshTargetOptions)
 end)
 
 RunService.RenderStepped:Connect(function(dt)
@@ -1113,6 +1113,11 @@ RunService.RenderStepped:Connect(function(dt)
     if C._espT >= 0.5 then
         C._espT = 0
         refreshESP()
+    end
+    C._optT = C._optT + dt
+    if C._optT >= 1 then
+        C._optT = 0
+        refreshTargetOptions()
     end
     local ph = phase()
     if not C.CFG.Enabled then
