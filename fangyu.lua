@@ -69,6 +69,12 @@ C._dmgCache = {}
 C._abInfo = "关"
 C._rdCache = nil
 C._rdT = 0
+C.TRACK = { Enabled = false, RayCheck = false, TeamCheck = false, Radius = 120 }
+C._trkGui = nil
+C._povFrame = nil
+C._lockFrame = nil
+C._trkTarget = nil
+C._trkT = 0
 local selfAlive
 
 
@@ -436,6 +442,19 @@ local function scan()
     return near, vis
 end
 local function target()
+    if C.TRACK and C.TRACK.Enabled and C._trkTarget then
+        local t = C._trkTarget
+        if t.Player and t.Player.Parent and valid(t.Player) and t.Part and t.Part.Parent then
+            local ok = true
+            if C.TRACK.TeamCheck then
+                local a, b = team(C.lp), team(t.Player)
+                ok = (a ~= nil and b ~= nil and a ~= b)
+            end
+            if ok and not (C._targetFilter and C._blockedTargets[t.Player]) then
+                return t
+            end
+        end
+    end
     local n, v = scan()
     if C.CFG.RayCheck then return v end
     return n
@@ -1144,6 +1163,115 @@ local function targetOptions()
     return t
 end
 
+local function ensureTrackGui()
+    if C._trkGui and C._trkGui.Parent then return C._trkGui end
+    local g = Instance.new("ScreenGui")
+    g.Name = "def_track"
+    g.ResetOnSpawn = false
+    g.IgnoreGuiInset = true
+    g.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    g.Parent = CoreGui
+    local function ring(name, col, thick)
+        local f = Instance.new("Frame")
+        f.Name = name
+        f.AnchorPoint = Vector2.new(0.5, 0.5)
+        f.BackgroundTransparency = 1
+        f.BorderSizePixel = 0
+        f.Visible = false
+        f.Parent = g
+        local uc = Instance.new("UICorner")
+        uc.CornerRadius = UDim.new(1, 0)
+        uc.Parent = f
+        local st = Instance.new("UIStroke")
+        st.Color = col
+        st.Thickness = thick
+        st.Transparency = 0.1
+        st.Parent = f
+        return f
+    end
+    C._povFrame = ring("pov", Color3.fromRGB(110, 235, 255), 1.5)
+    C._povFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+    C._lockFrame = ring("lock", Color3.fromRGB(255, 90, 90), 2)
+    C._trkGui = g
+    return g
+end
+local function trackRadius()
+    return math.clamp(C.TRACK.Radius or 120, 10, 600)
+end
+local function applyPov()
+    if not C._povFrame or not C._lockFrame then return end
+    local r = trackRadius()
+    C._povFrame.Size = UDim2.new(0, r * 2, 0, r * 2)
+end
+local function trackTeamOk(p)
+    if not C.TRACK.TeamCheck then return true end
+    local a, b = team(C.lp), team(p)
+    if not a or not b then return false end
+    return a ~= b
+end
+local function trackPick()
+    local mr = myRoot()
+    local cam = C.cam
+    if not mr or not cam then return nil end
+    local ctr = cam.ViewportSize * 0.5
+    local r = trackRadius()
+    local mp = mr.Position
+    local best, bd = nil, math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= C.lp and valid(p) and trackTeamOk(p) then
+            local part, pos = tpart(p)
+            if part then
+                local ok, sp = pcall(function() return cam:WorldToViewportPoint(pos) end)
+                if ok and sp and sp.Z > 0 then
+                    local dx, dy = sp.X - ctr.X, sp.Y - ctr.Y
+                    local d = math.sqrt(dx * dx + dy * dy)
+                    if d <= r and d < bd then
+                        local vis = true
+                        if C.TRACK.RayCheck then vis = los(mp, pos) end
+                        if vis then
+                            bd = d
+                            best = { Player = p, Part = part, Pos = pos, Dist = (pos - mp).Magnitude, SD = d }
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+local function updateTrack(dt)
+    if not C.TRACK.Enabled then
+        if C._povFrame then C._povFrame.Visible = false end
+        if C._lockFrame then C._lockFrame.Visible = false end
+        C._trkTarget = nil
+        return
+    end
+    if not ensureTrackGui() then return end
+    applyPov()
+    C._povFrame.Visible = true
+    C._trkT = C._trkT + dt
+    if C._trkT >= 0.08 then
+        C._trkT = 0
+        C._trkTarget = trackPick()
+    end
+    local t = C._trkTarget
+    if t and t.Player and t.Player.Parent and valid(t.Player) and t.Part and t.Part.Parent then
+        local ok, sp = pcall(function() return C.cam:WorldToViewportPoint(t.Part.Position) end)
+        if ok and sp and sp.Z > 0 then
+            local dist = (t.Part.Position - C.cam.CFrame.Position).Magnitude
+            local sz = math.clamp(600 / math.max(dist, 1), 14, 64)
+            C._lockFrame.Size = UDim2.new(0, sz, 0, sz)
+            C._lockFrame.Position = UDim2.new(0, sp.X, 0, sp.Y)
+            C._lockFrame.Visible = true
+        else
+            C._lockFrame.Visible = false
+        end
+    else
+        C._trkTarget = nil
+        C._lockFrame.Visible = false
+    end
+end
+
 local MainTab = Window:AddTab("防御", "shield")
 local L = MainTab:AddLeftGroupbox("ragebot", "crosshair")
 local R = MainTab:AddRightGroupbox("本地", "sliders-horizontal")
@@ -1201,7 +1329,7 @@ L:AddToggle("defTargetOn", {
 })
 
 L:AddToggle("defTeam", {
-    Text = "敌我识别",
+    Text = "队伍检查",
     Default = false,
     Callback = function(v) C.CFG.TeamCheck = v end,
 })
@@ -1329,6 +1457,46 @@ R:AddSlider("defJumpGap", {
     Callback = function(v) C.JUMP.Gap = v end,
 })
 
+local TrackTab = Window:AddTab("子弹追踪", "focus")
+local TK = TrackTab:AddLeftGroupbox("子弹追踪", "crosshair")
+
+TK:AddToggle("defTrackOn", {
+    Text = "启动",
+    Default = false,
+    Callback = function(v)
+        C.TRACK.Enabled = v
+        C._trkT = 0
+        C._trkTarget = nil
+        if v then
+            ensureTrackGui()
+            applyPov()
+            if C._povFrame then C._povFrame.Visible = true end
+        elseif C._povFrame then
+            C._povFrame.Visible = false
+            if C._lockFrame then C._lockFrame.Visible = false end
+        end
+    end,
+})
+TK:AddToggle("defTrackRay", {
+    Text = "射线检测",
+    Default = false,
+    Callback = function(v) C.TRACK.RayCheck = v end,
+})
+TK:AddToggle("defTrackTeam", {
+    Text = "队伍检查",
+    Default = false,
+    Callback = function(v) C.TRACK.TeamCheck = v end,
+})
+TK:AddSlider("defTrackPov", {
+    Text = "pov圈大小",
+    Default = C.TRACK.Radius,
+    Min = 30, Max = 400, Rounding = 0,
+    Callback = function(v)
+        C.TRACK.Radius = v
+        applyPov()
+    end,
+})
+
 C._slGui = Instance.new("ScreenGui")
 C._slGui.Name = "defense_status"
 C._slGui.ResetOnSpawn = false
@@ -1392,6 +1560,7 @@ RunService.RenderStepped:Connect(function(dt)
     scanDestroy(dt)
     tryDrone()
     guardTP()
+    updateTrack(dt)
     if C.CFG.Spin then spin(dt) elseif C.CFG.BackTurn then backTurn() end
     C._espT = C._espT + dt
     if C._espT >= 0.3 then
@@ -1473,6 +1642,11 @@ refreshESP()
 local function unload()
     C.CFG.HeadCtrl = false
     C.CFG.ThirdPerson = false
+    C.TRACK.Enabled = false
+    C._trkTarget = nil
+    if C._trkGui then C._trkGui:Destroy(); C._trkGui = nil end
+    C._povFrame = nil
+    C._lockFrame = nil
     if C._tpBeat then C._tpBeat:Disconnect(); C._tpBeat = nil end
     if C._tpStep then C._tpStep:Disconnect(); C._tpStep = nil end
     C.CFG.AutoJump = false
@@ -1481,7 +1655,7 @@ local function unload()
     C._jumpArmed = false
     C._lookRemote = nil
     for _, inst in ipairs(CoreGui:GetChildren()) do
-        if inst.Name == "wlqx_labels" or inst.Name == "def_labels" or inst.Name == "defense_status" then
+        if inst.Name == "wlqx_labels" or inst.Name == "def_labels" or inst.Name == "defense_status" or inst.Name == "def_track" then
             inst:Destroy()
         end
     end
