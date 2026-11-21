@@ -402,9 +402,47 @@ local function tickIgnore(dt)
     if C._rt >= 0.5 then
         C._rt = 0
         rebuildIgnore()
+        if C._rebuildVis then C._rebuildVis() end
         rebuildSmoke()
     end
 end
+
+local function eyePos()
+    local ok, p = pcall(function() return C.cam.CFrame.Position end)
+    if ok and p then return p end
+    local r = myRoot()
+    return r and r.Position or nil
+end
+local function belongs(inst, root)
+    if not inst or not root then return false end
+    if inst == root then return true end
+    local ok, r = pcall(function() return inst:IsDescendantOf(root) end)
+    return ok and r or false
+end
+local visParams = RaycastParams.new()
+visParams.FilterType = Enum.RaycastFilterType.Exclude
+visParams.IgnoreWater = true
+visParams.RespectCanCollide = false
+C._rebuildVis = function()
+    local ig = {}
+    if C.lp.Character then ig[#ig + 1] = C.lp.Character end
+    if C.cam then ig[#ig + 1] = C.cam end
+    local m = Workspace:FindFirstChild("Map")
+    if m then
+        for _, n in ipairs({ "Ignore", "Clips", "Markers" }) do
+            local c = m:FindFirstChild(n)
+            if c then ig[#ig + 1] = c end
+        end
+    end
+    local d = Workspace:FindFirstChild("Debris")
+    if d then
+        local s = d:FindFirstChild("ShuckyHax")
+        if s then ig[#ig + 1] = s end
+    end
+    if C._tracerFolder then ig[#ig + 1] = C._tracerFolder end
+    visParams.FilterDescendantsInstances = ig
+end
+C._rebuildVis()
 
 local PEN_HARD = {}
 local PEN_SOFT = {}
@@ -430,17 +468,19 @@ local function penCost(inst)
     if not inst then return -1 end
     local n = string.lower(inst.Name or "")
     if string.find(n, "nowallbang", 1, true) then return -1 end
-    local okT, tr = pcall(function() return inst.Transparency end)
     local okC, cc = pcall(function() return inst.CanCollide end)
+    local okT, tr = pcall(function() return inst.Transparency end)
     if (okC and cc == false) or (okT and tr and tr >= 0.99) then return 0 end
-    if string.find(n, "glass", 1, true) or string.find(n, "cardboard", 1, true) or string.find(n, "grate", 1, true) then return 0.5 end
+    if string.find(n, "glass", 1, true) or string.find(n, "grate", 1, true) then return 0.05 end
+    if string.find(n, "cardboard", 1, true) or string.find(n, "wood", 1, true) then return 0.16 end
     local okM, m = pcall(function() return inst.Material end)
     if okM and m then
         if PEN_HARD[m] then return -1 end
-        if PEN_SOFT[m] then return 0.1 end
+        if PEN_SOFT[m] then return 0.16 end
+        if m == Enum.Material.Plastic or m == Enum.Material.SmoothPlastic then return 0.16 end
     end
     local okP, pv = pcall(function() return inst:GetAttribute("PeneValue") end)
-    if okP and type(pv) == "number" and pv >= 0 then return pv end
+    if okP and type(pv) == "number" and pv >= 0 then return math.clamp(pv, 0, 1) end
     return -1
 end
 local function penExit(inst, pos, u)
@@ -453,55 +493,54 @@ local function penExit(inst, pos, u)
     if ok and back then return o3(back.Position), o3(back.Normal or -u) end
     return o3(pos), o3(-u)
 end
-local function los(a, b, penOverride, levelOverride)
+local function los(a, b, penOverride, levelOverride, targetRoot)
+    local start = eyePos() or a
+    if not start or not b then return false end
     local usePen = C.CFG.PenCheck
     if penOverride ~= nil then usePen = penOverride and true or false end
     local level = math.clamp(tonumber(levelOverride) or C.CFG.PenLevel or 1, 1, 5)
-    if smokeBlock(a, b) then return false end
-    local d = b - a
+    local d = b - start
     local dist = d.Magnitude
     if dist < 0.5 then return true end
+    if smokeBlock(start, b) then return false end
     local u = d.Unit
-    local cur = a
+    local extra = {}
+    for _, x in ipairs(visParams.FilterDescendantsInstances) do extra[#extra + 1] = x end
+    local params = visParams
+    local cur = start
     local rem = dist
-    local params = rp
-    local extra = nil
-    local budget = 1
-    local spent = 0
+    local damage = 1
+    local left = 4
     local pen = nil
-    for step = 1, 6 do
-        local res = Workspace:Raycast(cur, u * rem, params)
-        if not res then return true, pen end
-        local inst = res.Instance
-        if inst:IsA("Terrain") then return false end
-        if smokeName(inst) then return false end
+    for step = 1, 4 do
+        local r = Workspace:Raycast(cur, u * rem, params)
+        if not r then return true, pen end
+        local inst = r.Instance
+        if belongs(inst, targetRoot) then return true, pen end
+        if inst:IsA("Terrain") or smokeName(inst) then return false end
+        if left <= 0 then return false end
         local cost = penCost(inst)
-        local allow, take = false, 0
-        if usePen then
-            take = cost * level
-            allow = cost >= 0 and take <= budget
-        else
-            local okC, cc = pcall(function() return inst.CanCollide end)
-            local okT, tr = pcall(function() return inst.Transparency end)
-            allow = (okC and cc == false) or (okT and tr and tr >= 0.99)
-        end
-        if not allow then return false end
-        if usePen then
-            budget = budget - take
-            spent = spent + take
-            local ep, en = penExit(inst, res.Position, u)
+        local isChar = false
+        pcall(function()
+            isChar = inst.Parent and inst.Parent:FindFirstChildOfClass("Humanoid") ~= nil
+        end)
+        if isChar then cost = 0.16 end
+        if cost < 0 then return false end
+        if not usePen and cost ~= 0 then return false end
+        local ep, en = penExit(inst, r.Position, u)
+        if usePen and cost > 0 then
+            local thick = (ep - r.Position).Magnitude
+            local lost = cost * (0.5 + thick * 0.08) * level
+            if lost >= damage then return false end
+            damage = damage - lost
             pen = {
                 Wallbang = true,
-                Ratio = math.clamp(1 - spent, 0, 1),
+                Ratio = math.clamp(damage, 0, 1),
                 Endposition = ep,
                 Endnormal = en,
             }
         end
-        local st = (res.Position - cur).Magnitude + 0.15
-        if not extra then
-            extra = {}
-            for _, x in ipairs(rp.FilterDescendantsInstances) do extra[#extra + 1] = x end
-        end
+        left = left - 1
         extra[#extra + 1] = inst
         local np = RaycastParams.new()
         np.FilterType = Enum.RaycastFilterType.Exclude
@@ -509,11 +548,27 @@ local function los(a, b, penOverride, levelOverride)
         np.RespectCanCollide = false
         np.FilterDescendantsInstances = extra
         params = np
-        cur = cur + u * st
-        rem = rem - st
-        if rem <= 0.1 then return true, pen end
+        cur = ep + u * 0.05
+        rem = (b - cur).Magnitude
+        if rem < 0.05 then rem = 0.05 end
     end
     return false
+end
+local function visibleHit(p, penOverride, level)
+    local c = p.Character
+    if not c then return nil end
+    local r = myRoot()
+    local from = r and r.Position or nil
+    local seen = {}
+    for _, n in ipairs({ "Head", "UpperTorso", "Torso", "HumanoidRootPart" }) do
+        local bpart = c:FindFirstChild(n)
+        if bpart and bpart:IsA("BasePart") and not seen[bpart] then
+            seen[bpart] = true
+            local ok, pen = los(from, bpart.Position, penOverride, level, c)
+            if ok then return { Part = bpart, Pos = bpart.Position, Pen = pen } end
+        end
+    end
+    return nil
 end
 
 local function targetKey(p)
@@ -534,9 +589,10 @@ local function scan()
                     if part and not smokeBlock(mp, pos) then
                         local d = (pos - mp).Magnitude
                         if d < nd then nd = d; near = { Player = p, Part = part, Pos = pos, Dist = d } end
-                        if d < vd then
-                            local okv, penv = los(mp, pos, nil, C.CFG.PenLevel)
-                            if okv then vd = d; vis = { Player = p, Part = part, Pos = pos, Dist = d, Pen = penv } end
+                        local hit = visibleHit(p, nil, C.CFG.PenLevel)
+                        if hit then
+                            local dd = (hit.Pos - mp).Magnitude
+                            if dd < vd then vd = dd; vis = { Player = p, Part = hit.Part, Pos = hit.Pos, Dist = dd, Pen = hit.Pen } end
                         end
                     end
                 end
@@ -1172,7 +1228,7 @@ local function tryDrone()
     for i, e in pairs(C._reg) do
         if e.kind == "drone" and e.anchor and e.anchor.Parent then
             local d = (e.anchor.Position - mp).Magnitude
-            if d > DMIN and d < DMAX and d < bd and los(mp, e.anchor.Position, nil, C.CFG.PenLevel) then
+            if d > DMIN and d < DMAX and d < bd and los(mp, e.anchor.Position, nil, C.CFG.PenLevel, e.anchor) then
                 bd, bp, bi = d, e.anchor, i
             end
         end
@@ -1428,11 +1484,15 @@ local function trackPick()
                     local dx, dy = sp.X - ctr.X, sp.Y - ctr.Y
                     local d = math.sqrt(dx * dx + dy * dy)
                     if d <= r and d < bd then
-                        local vis, pen = true, nil
-                        if C.TRACK.RayCheck then vis, pen = los(mp, pos, C.TRACK.PenCheck, C.TRACK.PenLevel) end
+                        local vis, pen, hpart, hpos = true, nil, part, pos
+                        if C.TRACK.RayCheck then
+                            local hit = visibleHit(p, C.TRACK.PenCheck, C.TRACK.PenLevel)
+                            vis = hit ~= nil
+                            if hit then pen, hpart, hpos = hit.Pen, hit.Part, hit.Pos end
+                        end
                         if vis then
                             bd = d
-                            best = { Player = p, Part = part, Pos = pos, Dist = (pos - mp).Magnitude, SD = d, Pen = pen }
+                            best = { Player = p, Part = hpart, Pos = hpos, Head = part, Dist = (hpos - mp).Magnitude, SD = d, Pen = pen }
                         end
                     end
                 end
@@ -1465,9 +1525,10 @@ local function updateTrack(dt)
     end
     local t = C._trkTarget
     if t and t.Player and t.Player.Parent and valid(t.Player) and t.Part and t.Part.Parent then
-        local ok, sp = pcall(function() return C.cam:WorldToViewportPoint(t.Part.Position) end)
+        local q = (t.Head and t.Head.Parent) and t.Head or t.Part
+        local ok, sp = pcall(function() return C.cam:WorldToViewportPoint(q.Position) end)
         if ok and sp and sp.Z > 0 then
-            local dist = (t.Part.Position - C.cam.CFrame.Position).Magnitude
+            local dist = (q.Position - C.cam.CFrame.Position).Magnitude
             local sz = math.clamp(600 / math.max(dist, 1), 14, 64)
             C._lockFrame.Size = UDim2.new(0, sz, 0, sz)
             C._lockFrame.Position = UDim2.new(0, sp.X, 0, sp.Y)
