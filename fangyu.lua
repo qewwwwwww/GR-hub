@@ -32,6 +32,7 @@ C.CFG = {
     Spin = false,
     Stealth = false,
     AutoJump = false,
+    AntiBan = false,
 }
 C.SPD = { WalkSpeed = 32, Accl = 2 }
 C.SPIN = { Dir = "正转", Speed = 180 }
@@ -64,6 +65,7 @@ C._targetSel = nil
 C._blockedTargets = {}
 C._targetFilter = false
 C._droneShot = {}
+C._dmgCache = {}
 C._rdCache = nil
 C._rdT = 0
 local selfAlive
@@ -276,6 +278,8 @@ end
 selfAlive = function()
     local p = C.lp
     if not p or not p.Parent then return false end
+    local okTeam, tm = pcall(function() return p:GetAttribute("Team") end)
+    if okTeam and tm == "Spectator" then return false end
     if flagDead(p) then return false end
     local c = p.Character
     if not c or not c.Parent then return false end
@@ -442,18 +446,132 @@ local function countEnemy()
     end
     return n
 end
+local NOT_GUN_TYPE = {
+    throwable = true, grenade = true, utility = true, melee = true,
+    bomb = true, defuse = true, consumable = true,
+}
+local NOT_GUN_ATTR = {
+    "Melee", "Resurrect", "Heal", "SpeedB", "Teleport", "ThrowAnyway",
+    "Defib", "Defuse", "CanPlant", "Planting",
+}
+local GUN_ATTR = {
+    "Ammo", "UseAmmo", "FireRate", "ScopedFireRate", "Cooldown", "Burst",
+    "Auto", "Bullets", "Range", "Penetration", "Spread", "StandSpread",
+    "CrouchSpread", "RunSpread", "JumpSpread", "LadderSpread", "LandSpread",
+    "RecoilX", "RecoilY", "Recoil", "FireSpread", "ReloadTime", "SReload",
+    "ClipRefill", "EquipTime", "AnimType", "Backstab", "NoBolt", "AnimBoost",
+}
+local GUN_NAME_BAD = {
+    "grenade", "nade", "flash", "smoke", "molotov", "incend", "frag",
+    "decoy", "knife", "melee", "bayonet", "axe", "sword", "bat",
+    "bomb", "c4", "defuse", "defib", "medkit", "taser", "zeus",
+}
+local function attrOn(w, k)
+    local ok, v = pcall(function() return w:GetAttribute(k) end)
+    if ok and v ~= nil then
+        if type(v) == "number" then return v > 0 end
+        if type(v) == "boolean" then return v end
+        if type(v) == "string" then return v ~= "" and v ~= "nil" and v ~= "false" end
+        return true
+    end
+    local ch = w:FindFirstChild(k, true)
+    if ch and ch:IsA("ValueBase") then
+        local cv = ch.Value
+        if type(cv) == "number" then return cv > 0 end
+        if type(cv) == "boolean" then return cv end
+        if type(cv) == "string" then return cv ~= "" and cv ~= "nil" and cv ~= "false" end
+        if cv ~= nil then return true end
+    end
+    return false
+end
+local function isGun(w)
+    if not w then return false end
+    local n = string.lower(tostring(w.Name or ""))
+    for _, k in ipairs(GUN_NAME_BAD) do
+        if string.find(n, k, 1, true) then return false end
+    end
+    for _, key in ipairs({ "WeaponType", "Type", "Class", "Category", "Kind" }) do
+        local ok, tv = pcall(function() return w:GetAttribute(key) end)
+        if ok and type(tv) == "string" and NOT_GUN_TYPE[string.lower(tv)] then return false end
+    end
+    for _, k in ipairs(NOT_GUN_ATTR) do
+        if attrOn(w, k) then return false end
+    end
+    for _, k in ipairs(GUN_ATTR) do
+        if attrOn(w, k) then return true end
+    end
+    return false
+end
 local function curWeapon()
+    if not selfAlive() then return nil end
     local c = C.lp.Character
     if not c then return nil end
     local g = c:GetAttribute("WhatGun")
-    if not g then return nil end
-    if g == "Knife" then g = C.lp:GetAttribute("KnifeType") or "Knife" end
-    return C.Weapons:FindFirstChild(g)
+    if g == nil or g == "" then return nil end
+    local n = string.lower(tostring(g))
+    for _, k in ipairs(GUN_NAME_BAD) do
+        if string.find(n, k, 1, true) then return nil end
+    end
+    local w = C.Weapons:FindFirstChild(tostring(g))
+    if not isGun(w) then return nil end
+    return w
+end
+local DAMAGE_KEYS = { "Damage", "DamageAmount", "BaseDamage", "Dmg", "BulletDamage", "HitDamage", "BodyDamage" }
+local DAMAGE_SKIP = { "falloff", "drop", "range", "dist", "multi", "rate", "time", "speed", "spread", "recoil" }
+local function numVal(v)
+    if type(v) == "number" then return v end
+    if type(v) == "string" then return tonumber(v) end
+    return nil
+end
+local function weaponDamage(w)
+    if not w then return 0 end
+    local hit = C._dmgCache[w]
+    if hit ~= nil then return hit end
+    local best = 0
+    for _, k in ipairs(DAMAGE_KEYS) do
+        local ok, v = pcall(function() return w:GetAttribute(k) end)
+        if ok then
+            local n = numVal(v)
+            if n and n > best then best = n end
+        end
+        local ch = w:FindFirstChild(k, true)
+        if ch and ch:IsA("ValueBase") then
+            local ok2, v2 = pcall(function() return ch.Value end)
+            if ok2 then
+                local n = numVal(v2)
+                if n and n > best then best = n end
+            end
+        end
+    end
+    if best <= 100 then
+        pcall(function()
+            for k, v in pairs(w:GetAttributes()) do
+                local lk = string.lower(k)
+                if string.find(lk, "dam", 1, true) then
+                    local skip = false
+                    for _, s in ipairs(DAMAGE_SKIP) do
+                        if string.find(lk, s, 1, true) then skip = true; break end
+                    end
+                    if not skip then
+                        local n = numVal(v)
+                        if n and n > best then best = n end
+                    end
+                end
+            end
+        end)
+    end
+    C._dmgCache[w] = best
+    return best
 end
 local function fireRate(w)
     if not w then return 0.1 end
     local f = w:GetAttribute("FireRate")
-    if not f or f <= 0 then f = 0.1 end
+    if type(f) ~= "number" or f <= 0 then f = w:GetAttribute("Cooldown") end
+    if type(f) ~= "number" or f <= 0 then f = w:GetAttribute("ScopedFireRate") end
+    if type(f) ~= "number" or f <= 0 then f = 0.1 end
+    if C.CFG.AntiBan and f < 0.5 and weaponDamage(w) > 100 then
+        f = f + 0.3
+    end
     return f
 end
 
@@ -1030,6 +1148,11 @@ L:AddToggle("defEnable", {
     Default = false,
     Callback = function(v) C.CFG.Enabled = v end,
 })
+L:AddToggle("defAntiBan", {
+    Text = "防封",
+    Default = false,
+    Callback = function(v) C.CFG.AntiBan = v end,
+})
 L:AddToggle("defRay", {
     Text = "射线检测",
     Default = false,
@@ -1302,6 +1425,11 @@ RunService.RenderStepped:Connect(function(dt)
         return
     end
     local w = curWeapon()
+    if not w then
+        setSl(string.format("系统 // %s\n非枪械 | 敌 %d | 烟 %d\n名单 %s | 自旋 %s",
+            pn, countEnemy(), #C._smoke, wl, aa))
+        return
+    end
     local now = tick()
     if now - C._lastFire >= fireRate(w) then
         C._lastFire = now
