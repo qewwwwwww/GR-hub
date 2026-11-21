@@ -34,6 +34,7 @@ C.CFG = {
     AutoJump = false,
     AntiBan = false,
     PenCheck = false,
+    PenLevel = 1,
 }
 C.SPD = { WalkSpeed = 32, Accl = 2 }
 C.SPIN = { Dir = "正转", Speed = 180 }
@@ -70,7 +71,7 @@ C._dmgCache = {}
 C._abInfo = "关"
 C._rdCache = nil
 C._rdT = 0
-C.TRACK = { Enabled = false, RayCheck = false, PenCheck = false, TeamCheck = false, Radius = 120 }
+C.TRACK = { Enabled = false, RayCheck = false, PenCheck = false, PenLevel = 1, TeamCheck = false, Radius = 120 }
 C._hookT = 0
 C._shotRaw = nil
 C._shotMod = nil
@@ -452,9 +453,10 @@ local function penExit(inst, pos, u)
     if ok and back then return o3(back.Position), o3(back.Normal or -u) end
     return o3(pos), o3(-u)
 end
-local function los(a, b, penOverride)
+local function los(a, b, penOverride, levelOverride)
     local usePen = C.CFG.PenCheck
     if penOverride ~= nil then usePen = penOverride and true or false end
+    local level = math.clamp(tonumber(levelOverride) or C.CFG.PenLevel or 1, 1, 5)
     if smokeBlock(a, b) then return false end
     local d = b - a
     local dist = d.Magnitude
@@ -465,35 +467,37 @@ local function los(a, b, penOverride)
     local params = rp
     local extra = nil
     local budget = 1
+    local spent = 0
     local pen = nil
-    for step = 1, 4 do
+    for step = 1, 6 do
         local res = Workspace:Raycast(cur, u * rem, params)
         if not res then return true, pen end
         local inst = res.Instance
         if inst:IsA("Terrain") then return false end
-        if (res.Position - b).Magnitude < 0.8 then return true, pen end
-        if inst.Parent and inst.Parent:FindFirstChildOfClass("Humanoid") then return true, pen end
         if smokeName(inst) then return false end
         local cost = penCost(inst)
-        local allow
+        local allow, take = false, 0
         if usePen then
-            allow = cost >= 0 and cost <= budget
+            take = cost * level
+            allow = cost >= 0 and take <= budget
         else
             local okC, cc = pcall(function() return inst.CanCollide end)
             local okT, tr = pcall(function() return inst.Transparency end)
             allow = (okC and cc == false) or (okT and tr and tr >= 0.99)
         end
         if not allow then return false end
-        if cost > 0 then budget = budget - cost end
         if usePen then
+            budget = budget - take
+            spent = spent + take
             local ep, en = penExit(inst, res.Position, u)
             pen = {
                 Wallbang = true,
-                Ratio = math.clamp(budget, 0, 1),
+                Ratio = math.clamp(1 - spent, 0, 1),
                 Endposition = ep,
                 Endnormal = en,
             }
         end
+        local st = (res.Position - cur).Magnitude + 0.15
         if not extra then
             extra = {}
             for _, x in ipairs(rp.FilterDescendantsInstances) do extra[#extra + 1] = x end
@@ -505,7 +509,6 @@ local function los(a, b, penOverride)
         np.RespectCanCollide = false
         np.FilterDescendantsInstances = extra
         params = np
-        local st = (res.Position - cur).Magnitude + 0.15
         cur = cur + u * st
         rem = rem - st
         if rem <= 0.1 then return true, pen end
@@ -532,7 +535,7 @@ local function scan()
                         local d = (pos - mp).Magnitude
                         if d < nd then nd = d; near = { Player = p, Part = part, Pos = pos, Dist = d } end
                         if d < vd then
-                            local okv, penv = los(mp, pos)
+                            local okv, penv = los(mp, pos, nil, C.CFG.PenLevel)
                             if okv then vd = d; vis = { Player = p, Part = part, Pos = pos, Dist = d, Pen = penv } end
                         end
                     end
@@ -1169,7 +1172,7 @@ local function tryDrone()
     for i, e in pairs(C._reg) do
         if e.kind == "drone" and e.anchor and e.anchor.Parent then
             local d = (e.anchor.Position - mp).Magnitude
-            if d > DMIN and d < DMAX and d < bd and los(mp, e.anchor.Position) then
+            if d > DMIN and d < DMAX and d < bd and los(mp, e.anchor.Position, nil, C.CFG.PenLevel) then
                 bd, bp, bi = d, e.anchor, i
             end
         end
@@ -1426,7 +1429,7 @@ local function trackPick()
                     local d = math.sqrt(dx * dx + dy * dy)
                     if d <= r and d < bd then
                         local vis, pen = true, nil
-                        if C.TRACK.RayCheck then vis, pen = los(mp, pos, C.TRACK.PenCheck) end
+                        if C.TRACK.RayCheck then vis, pen = los(mp, pos, C.TRACK.PenCheck, C.TRACK.PenLevel) end
                         if vis then
                             bd = d
                             best = { Player = p, Part = part, Pos = pos, Dist = (pos - mp).Magnitude, SD = d, Pen = pen }
@@ -1507,6 +1510,12 @@ L:AddToggle("defPen", {
     Text = "穿透检查",
     Default = false,
     Callback = function(v) C.CFG.PenCheck = v end,
+})
+L:AddSlider("defPenLevel", {
+    Text = "穿透级别",
+    Default = C.CFG.PenLevel,
+    Min = 1, Max = 5, Rounding = 0,
+    Callback = function(v) C.CFG.PenLevel = v end,
 })
 
 C._targetSel = L:AddDropdown("defTargets", {
@@ -1717,6 +1726,12 @@ TK:AddToggle("defTrackPen", {
     Default = false,
     Callback = function(v) C.TRACK.PenCheck = v end,
 })
+TK:AddSlider("defTrackPenLevel", {
+    Text = "穿透级别",
+    Default = C.TRACK.PenLevel,
+    Min = 1, Max = 5, Rounding = 0,
+    Callback = function(v) C.TRACK.PenLevel = v end,
+})
 TK:AddToggle("defTrackTeam", {
     Text = "队伍检查",
     Default = false,
@@ -1897,6 +1912,8 @@ local function unload()
     C.CFG.ThirdPerson = false
     C.TRACK.Enabled = false
     C.TRACK.PenCheck = false
+    C.TRACK.PenLevel = 1
+    C.CFG.PenLevel = 1
     C._trkTarget = nil
     if C._trkGui then C._trkGui:Destroy(); C._trkGui = nil end
     C._povFrame = nil
