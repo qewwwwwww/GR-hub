@@ -1457,8 +1457,28 @@ R:AddSlider("defJumpGap", {
     Callback = function(v) C.JUMP.Gap = v end,
 })
 
-local TrackTab = Window:AddTab("子弹追踪", "focus")
-local TK = TrackTab:AddLeftGroupbox("子弹追踪", "crosshair")
+local TrackTab
+do
+    local ok, t = pcall(function()
+        return Window:AddTab("子弹追踪", "crosshair")
+    end)
+    if ok and t then
+        TrackTab = t
+    else
+        TrackTab = MainTab
+    end
+end
+local TK
+do
+    local ok, g = pcall(function()
+        return TrackTab:AddLeftGroupbox("子弹追踪", "crosshair")
+    end)
+    if ok and g then
+        TK = g
+    else
+        TK = L
+    end
+end
 
 TK:AddToggle("defTrackOn", {
     Text = "启动",
@@ -1685,6 +1705,8 @@ if GHub and GHub.RegisterModule then
     GHub.RegisterModule("防御", {
         Name = "防御",
         MainTab = MainTab,
+        Tabs = { MainTab, TrackTab },
+        TrackTab = TrackTab,
         Unload = unload,
     })
 end
