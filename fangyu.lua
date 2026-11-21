@@ -69,7 +69,11 @@ C._dmgCache = {}
 C._abInfo = "关"
 C._rdCache = nil
 C._rdT = 0
-C.TRACK = { Enabled = false, RayCheck = false, TeamCheck = false, Radius = 120 }
+C.TRACK = { Enabled = false, RayCheck = false, TeamCheck = false, Radius = 120, Hijack = false }
+C._shotRaw = nil
+C._shotMod = nil
+C._shotHooked = false
+C._shotState = "关"
 C._trkGui = nil
 C._povFrame = nil
 C._lockFrame = nil
@@ -445,14 +449,7 @@ local function target()
     if C.TRACK and C.TRACK.Enabled and C._trkTarget then
         local t = C._trkTarget
         if t.Player and t.Player.Parent and valid(t.Player) and t.Part and t.Part.Parent then
-            local ok = true
-            if C.TRACK.TeamCheck then
-                local a, b = team(C.lp), team(t.Player)
-                ok = (a ~= nil and b ~= nil and a ~= b)
-            end
-            if ok and not (C._targetFilter and C._blockedTargets[t.Player]) then
-                return t
-            end
+            return t
         end
     end
     local n, v = scan()
@@ -657,25 +654,124 @@ local function trace(s, e, life)
     Debris:AddItem(glow, life + 0.05)
 end
 
+local function seg(a, b, col, folder, life, w)
+    local len = (b - a).Magnitude
+    if len < 0.3 then return end
+    local p = Instance.new("Part")
+    p.Name = "def_bend"
+    p.Anchored = true
+    p.CanCollide = false
+    p.CanQuery = false
+    p.CanTouch = false
+    p.CastShadow = false
+    p.Material = Enum.Material.Neon
+    p.Color = col
+    p.Size = Vector3.new(w, w, len)
+    p.CFrame = CFrame.lookAt((a + b) * 0.5, b)
+    p.Parent = folder
+    Debris:AddItem(p, life + 0.05)
+    local g2 = p:Clone()
+    g2.Name = "def_bend_glow"
+    g2.Transparency = 0.85
+    g2.Size = Vector3.new(w * 4, w * 4, len)
+    g2.Parent = folder
+    Debris:AddItem(g2, life + 0.05)
+    local fi = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+    task.delay(life - 0.35, function()
+        if p.Parent then TweenService:Create(p, fi, { Transparency = 1 }):Play() end
+        if g2.Parent then TweenService:Create(g2, fi, { Transparency = 1 }):Play() end
+    end)
+end
+local function traceBend(s, e, life)
+    if C.CFG.Stealth or not C.CFG.Tracer or not s or not e then return end
+    life = life or 2
+    local look = C.cam.CFrame.LookVector
+    local k = math.clamp((e - s).Magnitude * 0.22, 4, 22)
+    local bend = s + look * k
+    local col = Color3.fromHSV(tick() % 1, 0.55, 1)
+    local folder = ensureTracerFolder()
+    seg(s, bend, col, folder, life, 0.06)
+    seg(bend, e, col, folder, life, 0.07)
+end
+
+local function buildHit(t, cp)
+    local part = t.Part
+    local hp = part.Position
+    local dir = (hp - cp).Unit
+    return {
+        Hit = part.Parent, PartName = part.Name, Position = o3(hp), Normal = o3(-dir),
+        hS = part.Size.Magnitude, hP = o3(hp), cCF = CFrame.lookAt(cp, hp),
+        Headshot = (part.Name == "Head"), Wallbang = false, Ratio = 1,
+        Endposition = o3(hp), Endnormal = o3(-dir),
+    }
+end
+local function liveLock()
+    local t = C._trkTarget
+    if not (C.TRACK.Enabled and C.TRACK.Hijack and t) then return nil end
+    if not (t.Player and t.Player.Parent and t.Part and t.Part.Parent) then return nil end
+    local ok = pcall(function() return t.Part.Position end)
+    if not ok then return nil end
+    return t
+end
+local function installShotHook()
+    if C._shotHooked then C._shotState = "已劫持"; return true end
+    local ok, mod = pcall(function()
+        local m = ReplicatedStorage:FindFirstChild("Modules")
+        if not m then return nil end
+        local s = m:FindFirstChild("Shucky")
+        if not s then return nil end
+        return require(s)
+    end)
+    if not ok or type(mod) ~= "table" or type(mod.activateresult) ~= "function" then
+        C._shotState = "不支持"
+        return false
+    end
+    local raw = mod.activateresult
+    local ok2 = pcall(function()
+        mod.activateresult = function(hits, wep, muzzle, alt, ...)
+            local t = liveLock()
+            if not t then return raw(hits, wep, muzzle, alt, ...) end
+            local cp = C.cam.CFrame.Position
+            local hp = t.Part.Position
+            local fake = buildHit(t, cp)
+            local mr = myRoot()
+            traceBend(mr and mr.Position or cp, hp, 1.4)
+            return raw({ fake }, wep, muzzle, alt, ...)
+        end
+    end)
+    if not ok2 then C._shotState = "不支持"; return false end
+    C._shotRaw = raw
+    C._shotMod = mod
+    C._shotHooked = true
+    C._shotState = "已劫持"
+    return true
+end
+local function restoreShotHook()
+    if C._shotHooked and C._shotMod and C._shotRaw then
+        pcall(function() C._shotMod.activateresult = C._shotRaw end)
+    end
+    C._shotHooked = false
+    C._shotRaw = nil
+    C._shotMod = nil
+    C._shotState = "关"
+end
+
 local function fireAt(t)
     if not selfAlive() then return end
     local w = curWeapon()
     if not w then return end
     local r = fireRemote()
     if not r then return end
-    local part = t.Part
     local cp = C.cam.CFrame.Position
-    local hp = part.Position
-    local dir = (hp - cp).Unit
-    local v = {
-        Hit = part.Parent, PartName = part.Name, Position = o3(hp), Normal = o3(-dir),
-        hS = part.Size.Magnitude, hP = o3(hp), cCF = CFrame.lookAt(cp, hp),
-        Headshot = (part.Name == "Head"), Wallbang = false, Ratio = 1,
-        Endposition = o3(hp), Endnormal = o3(-dir),
-    }
+    local v = buildHit(t, cp)
     r:FireServer(v, w, false, false, v.cCF, v.hP, nil, nil)
     local mr = myRoot()
-    trace(mr and mr.Position or cp, hp, 2)
+    local hp = t.Part.Position
+    if C.TRACK.Enabled and C._trkTarget then
+        traceBend(mr and mr.Position or cp, hp, 2)
+    else
+        trace(mr and mr.Position or cp, hp, 2)
+    end
     playFireSound()
 end
 
@@ -1491,6 +1587,7 @@ TK:AddToggle("defTrackOn", {
             ensureTrackGui()
             applyPov()
             if C._povFrame then C._povFrame.Visible = true end
+            if C.TRACK.Hijack then installShotHook() end
         elseif C._povFrame then
             C._povFrame.Visible = false
             if C._lockFrame then C._lockFrame.Visible = false end
@@ -1514,6 +1611,14 @@ TK:AddSlider("defTrackPov", {
     Callback = function(v)
         C.TRACK.Radius = v
         applyPov()
+    end,
+})
+TK:AddToggle("defTrackHijack", {
+    Text = "劫持射线",
+    Default = false,
+    Callback = function(v)
+        C.TRACK.Hijack = v
+        if v then installShotHook() else restoreShotHook() end
     end,
 })
 
@@ -1595,6 +1700,7 @@ RunService.RenderStepped:Connect(function(dt)
     local live = canFire()
     local pn = phaseName() .. (C.CFG.AutoJump and live and " · 连跳" or "")
         .. (C.CFG.AntiBan and (" · 防封 " .. (C._abInfo or "关")) or "")
+        .. (C.TRACK.Enabled and (" · 追踪 " .. (C.TRACK.Hijack and (C._shotState or "关") or "仅锁定")) or "")
     local aa = C.CFG.Spin and (C.SPIN.Dir .. " " .. C.SPIN.Speed) or "关"
     local pit = C.CFG.HeadCtrl and C.HEAD.Mode or "关"
     local wl = (C._targetFilter and "开" or "关") .. " | 俯仰 " .. pit
@@ -1660,6 +1766,8 @@ end
 refreshESP()
 
 local function unload()
+    restoreShotHook()
+    C.TRACK.Hijack = false
     C.CFG.HeadCtrl = false
     C.CFG.ThirdPerson = false
     C.TRACK.Enabled = false
