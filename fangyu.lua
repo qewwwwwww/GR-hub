@@ -66,6 +66,7 @@ C._blockedTargets = {}
 C._targetFilter = false
 C._droneShot = {}
 C._dmgCache = {}
+C._abInfo = "关"
 C._rdCache = nil
 C._rdT = 0
 local selfAlive
@@ -516,38 +517,50 @@ local function curWeapon()
     if not isGun(w) then return nil end
     return w
 end
-local DAMAGE_KEYS = { "Damage", "DamageAmount", "BaseDamage", "Dmg", "BulletDamage", "HitDamage", "BodyDamage" }
-local DAMAGE_SKIP = { "falloff", "drop", "range", "dist", "multi", "rate", "time", "speed", "spread", "recoil" }
+local DAMAGE_KEYS = {
+    "Damage", "DamageAmount", "BaseDamage", "Dmg", "BulletDamage", "HitDamage",
+    "BodyDamage", "HeadDamage", "DamageMin", "DamageMax", "Damage1", "Damage2",
+    "MinDamage", "MaxDamage", "BaseDmg", "HitDmg", "KillDamage", "PelletDamage",
+}
+local DAMAGE_SKIP = {
+    "falloff", "drop", "range", "dist", "multi", "rate", "time", "speed",
+    "spread", "recoil", "delay", "radius", "count", "per", "modifier",
+}
 local function numVal(v)
     if type(v) == "number" then return v end
     if type(v) == "string" then return tonumber(v) end
     return nil
 end
+local function attrNum(w, k)
+    local ok, v = pcall(function() return w:GetAttribute(k) end)
+    if ok then
+        local n = numVal(v)
+        if n then return n end
+    end
+    local ch = w:FindFirstChild(k, true)
+    if ch and ch:IsA("ValueBase") then
+        local ok2, v2 = pcall(function() return ch.Value end)
+        if ok2 then
+            local n = numVal(v2)
+            if n then return n end
+        end
+    end
+    return nil
+end
 local function weaponDamage(w)
     if not w then return 0 end
     local hit = C._dmgCache[w]
-    if hit ~= nil then return hit end
+    if hit ~= nil and hit > 0 then return hit end
     local best = 0
     for _, k in ipairs(DAMAGE_KEYS) do
-        local ok, v = pcall(function() return w:GetAttribute(k) end)
-        if ok then
-            local n = numVal(v)
-            if n and n > best then best = n end
-        end
-        local ch = w:FindFirstChild(k, true)
-        if ch and ch:IsA("ValueBase") then
-            local ok2, v2 = pcall(function() return ch.Value end)
-            if ok2 then
-                local n = numVal(v2)
-                if n and n > best then best = n end
-            end
-        end
+        local n = attrNum(w, k)
+        if n and n > best then best = n end
     end
     if best <= 100 then
         pcall(function()
             for k, v in pairs(w:GetAttributes()) do
                 local lk = string.lower(k)
-                if string.find(lk, "dam", 1, true) then
+                if string.find(lk, "dam", 1, true) or string.find(lk, "dmg", 1, true) or string.find(lk, "kill", 1, true) then
                     local skip = false
                     for _, s in ipairs(DAMAGE_SKIP) do
                         if string.find(lk, s, 1, true) then skip = true; break end
@@ -560,17 +573,40 @@ local function weaponDamage(w)
             end
         end)
     end
-    C._dmgCache[w] = best
+    if best <= 100 then
+        pcall(function()
+            for _, d in ipairs(w:GetDescendants()) do
+                if d:IsA("ValueBase") then
+                    local lk = string.lower(d.Name)
+                    if string.find(lk, "dam", 1, true) or string.find(lk, "dmg", 1, true) then
+                        local n = numVal(d.Value)
+                        if n and n > best then best = n end
+                    end
+                end
+            end
+        end)
+    end
+    if best > 0 then C._dmgCache[w] = best end
     return best
 end
+local AB_DMG = 100
+local AB_RATE = 0.7
+local AB_ADD = 0.5
 local function fireRate(w)
     if not w then return 0.1 end
     local f = w:GetAttribute("FireRate")
     if type(f) ~= "number" or f <= 0 then f = w:GetAttribute("Cooldown") end
     if type(f) ~= "number" or f <= 0 then f = w:GetAttribute("ScopedFireRate") end
     if type(f) ~= "number" or f <= 0 then f = 0.1 end
-    if C.CFG.AntiBan and f < 0.5 and weaponDamage(w) > 100 then
-        f = f + 0.3
+    if not C.CFG.AntiBan then return f end
+    local d = weaponDamage(w)
+    if d > AB_DMG and f < AB_RATE then
+        f = f + AB_ADD
+        C._abInfo = "+0.5"
+    elseif d <= AB_DMG then
+        C._abInfo = "伤" .. math.floor(d)
+    else
+        C._abInfo = "慢"
     end
     return f
 end
@@ -1151,7 +1187,11 @@ L:AddToggle("defEnable", {
 L:AddToggle("defAntiBan", {
     Text = "防封",
     Default = false,
-    Callback = function(v) C.CFG.AntiBan = v end,
+    Callback = function(v)
+        C.CFG.AntiBan = v
+        C._abInfo = v and "待判" or "关"
+        C._dmgCache = {}
+    end,
 })
 L:AddToggle("defRay", {
     Text = "射线检测",
@@ -1394,6 +1434,7 @@ RunService.RenderStepped:Connect(function(dt)
     end
     local live = canFire()
     local pn = phaseName() .. (C.CFG.AutoJump and live and " · 连跳" or "")
+        .. (C.CFG.AntiBan and (" · 防封 " .. (C._abInfo or "关")) or "")
     local aa = C.CFG.Spin and (C.SPIN.Dir .. " " .. C.SPIN.Speed) or "关"
     local pit = C.CFG.HeadCtrl and C.HEAD.Mode or "关"
     local wl = (C._targetFilter and "开" or "关") .. " | 俯仰 " .. pit
