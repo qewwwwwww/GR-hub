@@ -64,6 +64,9 @@ C._targetSel = nil
 C._blockedTargets = {}
 C._targetFilter = false
 C._droneShot = {}
+C._rdCache = nil
+C._rdT = 0
+local selfAlive
 
 
 local FIRE_SOUND_ID = "rbxassetid://8679627751"
@@ -127,7 +130,7 @@ local function startHeadCtrl()
     task.spawn(function()
         while C.CFG.HeadCtrl do
             local r = lookRemote()
-            if r then
+            if r and selfAlive() then
                 pcall(function() r:FireServer(headPitch(), LOOK_ARG2) end)
             end
             task.wait(LOOK_GAP)
@@ -198,22 +201,92 @@ local function enemy(p)
     if not a or not b then return false end
     return a ~= b
 end
-local function alive(p)
-    local a = p:GetAttribute("Alive")
-    if a ~= nil then return a end
-    local c = p.Character
-    if c then
-        a = c:GetAttribute("Alive")
-        if a ~= nil then return a end
+local function deadVal(v)
+    return v == false or v == 0 or v == "0" or v == "false" or v == "False" or v == "Dead" or v == "dead"
+end
+local function aliveVal(v)
+    return v == true or v == 1 or v == "1" or v == "true" or v == "True" or v == "Alive" or v == "alive"
+end
+local LIFE_KEYS = { "Alive", "alive", "IsAlive", "isAlive", "Living", "living" }
+local DEAD_KEYS = { "Dead", "dead", "IsDead", "isDead", "Spectator", "spectator", "Spectating", "spectating", "Eliminated", "eliminated", "Killed", "killed" }
+local STATE_KEYS = { "LifeState", "State", "Status" }
+local STATE_DEAD = { "dead", "spectat", "elimin", "killed", "死亡", "观战", "阵亡" }
+local function stateDead(v)
+    if type(v) ~= "string" then return false end
+    local s = v:lower()
+    for _, w in ipairs(STATE_DEAD) do
+        if s:find(w, 1, true) then return true end
     end
+    return false
+end
+local function flagDead(inst)
+    if not inst then return false end
+    local ok, res = pcall(function()
+        for _, k in ipairs(LIFE_KEYS) do
+            local v = inst:GetAttribute(k)
+            if v ~= nil and deadVal(v) then return true end
+            local ch = inst:FindFirstChild(k)
+            if ch and ch:IsA("ValueBase") and deadVal(ch.Value) then return true end
+        end
+        for _, k in ipairs(DEAD_KEYS) do
+            local v = inst:GetAttribute(k)
+            if v ~= nil and aliveVal(v) then return true end
+            local ch = inst:FindFirstChild(k)
+            if ch and ch:IsA("ValueBase") and aliveVal(ch.Value) then return true end
+        end
+        for _, k in ipairs(STATE_KEYS) do
+            if stateDead(inst:GetAttribute(k)) then return true end
+            local ch = inst:FindFirstChild(k)
+            if ch and ch:IsA("ValueBase") and stateDead(ch.Value) then return true end
+        end
+        return false
+    end)
+    return ok and res or false
+end
+local function rdDead()
+    local now = tick()
+    if not C._rdCache or not C._rdCache.Parent or now - C._rdT >= 1 then
+        C._rdT = now
+        local root = ReplicatedStorage:FindFirstChild("RoundData")
+        C._rdCache = root and root:FindFirstChild(C.lp.Name) or nil
+    end
+    local rd = C._rdCache
+    if not rd then return false end
+    if flagDead(rd) then return true end
+    for _, ch in ipairs(rd:GetChildren()) do
+        if flagDead(ch) then return true end
+    end
+    return false
+end
+local function alive(p)
+    if flagDead(p) then return false end
+    local c = p.Character
+    if c and flagDead(c) then return false end
     return true
 end
 local function valid(p)
     local c = p.Character
     if not c then return false end
     local h = c:FindFirstChildOfClass("Humanoid")
-    if h and h.Health <= 0 then return false end
+    if not h or h.Health <= 0 then return false end
+    local ok, st = pcall(function() return h:GetState() end)
+    if ok and st == Enum.HumanoidStateType.Dead then return false end
     return alive(p)
+end
+selfAlive = function()
+    local p = C.lp
+    if not p or not p.Parent then return false end
+    if flagDead(p) then return false end
+    local c = p.Character
+    if not c or not c.Parent then return false end
+    if not c:IsDescendantOf(Workspace) then return false end
+    if flagDead(c) then return false end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    if not h or h.Health <= 0 then return false end
+    local ok, st = pcall(function() return h:GetState() end)
+    if ok and st == Enum.HumanoidStateType.Dead then return false end
+    if rdDead() then return false end
+    return true
 end
 local function tpart(p)
     local c = p.Character
@@ -267,10 +340,20 @@ local function smokeName(i)
     end
     return false
 end
+local function smokeAlive(d)
+    local ok, tr = pcall(function() return d.Transparency end)
+    if ok and tr ~= nil and tr >= 0.9 then
+        for _, ch in ipairs(d:GetChildren()) do
+            if ch:IsA("ParticleEmitter") and ch.Enabled then return true end
+        end
+        return false
+    end
+    return true
+end
 local function rebuildSmoke()
     local l = {}
     for _, d in ipairs(Workspace:GetDescendants()) do
-        if d:IsA("BasePart") and smokeName(d) then
+        if d:IsA("BasePart") and smokeName(d) and smokeAlive(d) then
             local r = math.max(d.Size.X, d.Size.Y, d.Size.Z) * 0.5
             l[#l + 1] = { part = d, radius = math.max(r, 1) }
         end
@@ -303,14 +386,6 @@ local function tickIgnore(dt)
     end
 end
 
-local function nearTarget(inst, point)
-    local ok, inside = pcall(function()
-        local rel = inst.CFrame:ToObjectSpace(CFrame.new(point)).Position
-        local hs = inst.Size * 0.5
-        return math.abs(rel.X) <= hs.X + 2 and math.abs(rel.Y) <= hs.Y + 2 and math.abs(rel.Z) <= hs.Z + 2
-    end)
-    return ok and inside
-end
 local function los(a, b)
     if smokeBlock(a, b) then return false end
     local d = b - a
@@ -320,25 +395,19 @@ local function los(a, b)
     local cur = a
     local rem = dist
     local g = 0
-    while rem > 0.1 and g < 12 do
+    while rem > 0.1 and g < 24 do
         g = g + 1
         local res = Workspace:Raycast(cur, u * rem, rp)
         if not res then return true end
-        if (res.Position - b).Magnitude < 1.5 then return true end
         local inst = res.Instance
-        if nearTarget(inst, b) then
-            local st = (res.Position - cur).Magnitude + 0.15
-            cur = cur + u * st
-            rem = rem - st
-        else
-            if inst.CanCollide then return false end
-            if smokeName(inst) then return false end
-            local ok, tr = pcall(function() return inst.Transparency end)
-            if not ok or tr == nil or tr < 0.85 then return false end
-            local st = (res.Position - cur).Magnitude + 0.15
-            cur = cur + u * st
-            rem = rem - st
-        end
+        if inst:IsA("Terrain") then return false end
+        local ok, solid = pcall(function() return inst.CanCollide end)
+        if ok and solid then return false end
+        if smokeName(inst) then return false end
+        if (res.Position - b).Magnitude < 0.8 then return true end
+        local st = (res.Position - cur).Magnitude + 0.15
+        cur = cur + u * st
+        rem = rem - st
     end
     return true
 end
@@ -445,6 +514,7 @@ local function trace(s, e, life)
 end
 
 local function fireAt(t)
+    if not selfAlive() then return end
     local w = curWeapon()
     if not w then return end
     local r = fireRemote()
@@ -466,6 +536,7 @@ local function fireAt(t)
 end
 
 local function fireDrone(model, part)
+    if not selfAlive() then return end
     local w = curWeapon()
     if not w then return end
     local r = fireRemote()
@@ -742,7 +813,7 @@ local function scanDestroy(dt)
     end
 end
 local function tryDrone()
-    if not C.CFG.Enabled or not C.CFG.AntiDrone then return end
+    if not selfAlive() or not C.CFG.Enabled or not C.CFG.AntiDrone then return end
     local now = tick()
     local mr = myRoot()
     if not mr then return end
@@ -809,7 +880,7 @@ local function jumpPulse(r)
     end)
 end
 local function autoJump(dt)
-    if not C.CFG.AutoJump or not canFire() then
+    if not C.CFG.AutoJump or not canFire() or not selfAlive() then
         C._jumpT = 0
         C._jumpPend = 0
         C._jumpArmed = false
@@ -1205,6 +1276,13 @@ RunService.RenderStepped:Connect(function(dt)
     local wl = (C._targetFilter and "开" or "关") .. " | 俯仰 " .. pit
     if not C.CFG.Enabled then
         setSl(string.format("系统 // %s\n待机 | 敌 %d | 烟 %d\n名单 %s | 自旋 %s",
+            pn, countEnemy(), #C._smoke, wl, aa))
+        return
+    end
+    if not selfAlive() then
+        C._lastFire = 0
+        C._dLast = 0
+        setSl(string.format("系统 // %s\n已阵亡 | 敌 %d | 烟 %d\n名单 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, wl, aa))
         return
     end
