@@ -517,14 +517,12 @@ local function curWeapon()
     if not isGun(w) then return nil end
     return w
 end
-local DAMAGE_KEYS = {
-    "Damage", "DamageAmount", "BaseDamage", "Dmg", "BulletDamage", "HitDamage",
-    "BodyDamage", "HeadDamage", "DamageMin", "DamageMax", "Damage1", "Damage2",
-    "MinDamage", "MaxDamage", "BaseDmg", "HitDmg", "KillDamage", "PelletDamage",
-}
+local DAMAGE_KEYS = { "Damage", "BaseDamage", "DamageAmount", "BulletDamage", "Dmg" }
 local DAMAGE_SKIP = {
-    "falloff", "drop", "range", "dist", "multi", "rate", "time", "speed",
-    "spread", "recoil", "delay", "radius", "count", "per", "modifier",
+    "head", "max", "min", "pellet", "kill", "streak", "falloff", "drop",
+    "multi", "rate", "time", "speed", "spread", "recoil", "radius", "count",
+    "per", "modifier", "bonus", "alt", "scope", "burst", "ammo", "clip",
+    "range", "dist", "delay", "ratio", "percent",
 }
 local function numVal(v)
     if type(v) == "number" then return v end
@@ -533,60 +531,31 @@ local function numVal(v)
 end
 local function attrNum(w, k)
     local ok, v = pcall(function() return w:GetAttribute(k) end)
-    if ok then
-        local n = numVal(v)
-        if n then return n end
-    end
-    local ch = w:FindFirstChild(k, true)
-    if ch and ch:IsA("ValueBase") then
-        local ok2, v2 = pcall(function() return ch.Value end)
-        if ok2 then
-            local n = numVal(v2)
-            if n then return n end
-        end
-    end
+    if ok then return numVal(v) end
     return nil
 end
 local function weaponDamage(w)
     if not w then return 0 end
-    local hit = C._dmgCache[w]
-    if hit ~= nil and hit > 0 then return hit end
-    local best = 0
     for _, k in ipairs(DAMAGE_KEYS) do
         local n = attrNum(w, k)
-        if n and n > best then best = n end
+        if n and n > 0 then return n end
     end
-    if best <= 100 then
-        pcall(function()
-            for k, v in pairs(w:GetAttributes()) do
-                local lk = string.lower(k)
-                if string.find(lk, "dam", 1, true) or string.find(lk, "dmg", 1, true) or string.find(lk, "kill", 1, true) then
-                    local skip = false
-                    for _, s in ipairs(DAMAGE_SKIP) do
-                        if string.find(lk, s, 1, true) then skip = true; break end
-                    end
-                    if not skip then
-                        local n = numVal(v)
-                        if n and n > best then best = n end
-                    end
+    local best = 0
+    pcall(function()
+        for k, v in pairs(w:GetAttributes()) do
+            local lk = string.lower(k)
+            if string.find(lk, "dam", 1, true) or string.find(lk, "dmg", 1, true) then
+                local skip = false
+                for _, s in ipairs(DAMAGE_SKIP) do
+                    if string.find(lk, s, 1, true) then skip = true; break end
+                end
+                if not skip then
+                    local n = numVal(v)
+                    if n and n > best then best = n end
                 end
             end
-        end)
-    end
-    if best <= 100 then
-        pcall(function()
-            for _, d in ipairs(w:GetDescendants()) do
-                if d:IsA("ValueBase") then
-                    local lk = string.lower(d.Name)
-                    if string.find(lk, "dam", 1, true) or string.find(lk, "dmg", 1, true) then
-                        local n = numVal(d.Value)
-                        if n and n > best then best = n end
-                    end
-                end
-            end
-        end)
-    end
-    if best > 0 then C._dmgCache[w] = best end
+        end
+    end)
     return best
 end
 local AB_DMG = 100
@@ -603,10 +572,12 @@ local function fireRate(w)
     if d > AB_DMG and f < AB_RATE then
         f = f + AB_ADD
         C._abInfo = "+0.5"
+    elseif d <= 0 then
+        C._abInfo = "伤?"
     elseif d <= AB_DMG then
-        C._abInfo = "伤" .. math.floor(d)
+        C._abInfo = "低伤 " .. math.floor(d)
     else
-        C._abInfo = "慢"
+        C._abInfo = "慢 " .. math.floor(d)
     end
     return f
 end
