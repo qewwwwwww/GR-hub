@@ -33,6 +33,7 @@ C.CFG = {
     Stealth = false,
     AutoJump = false,
     AntiBan = false,
+    PenCheck = false,
 }
 C.SPD = { WalkSpeed = 32, Accl = 2 }
 C.SPIN = { Dir = "正转", Speed = 180 }
@@ -62,14 +63,15 @@ C._sl = nil
 C._slGui = nil
 C._sound = nil
 C._targetSel = nil
-C._blockedTargets = {}
-C._targetFilter = false
+C._picked = {}
+C._selAll = true
 C._droneShot = {}
 C._dmgCache = {}
 C._abInfo = "关"
 C._rdCache = nil
 C._rdT = 0
-C.TRACK = { Enabled = false, RayCheck = false, TeamCheck = false, Radius = 120, Hijack = false }
+C.TRACK = { Enabled = false, RayCheck = false, PenCheck = false, TeamCheck = false, Radius = 120 }
+C._hookT = 0
 C._shotRaw = nil
 C._shotMod = nil
 C._shotHooked = false
@@ -356,6 +358,8 @@ local function smokeName(i)
     return false
 end
 local function smokeAlive(d)
+    local okDis, dis = pcall(function() return d:GetAttribute("Disappear") end)
+    if okDis and dis then return false end
     local ok, tr = pcall(function() return d.Transparency end)
     if ok and tr ~= nil and tr >= 0.9 then
         for _, ch in ipairs(d:GetChildren()) do
@@ -401,7 +405,56 @@ local function tickIgnore(dt)
     end
 end
 
-local function los(a, b)
+local PEN_HARD = {}
+local PEN_SOFT = {}
+pcall(function()
+    PEN_HARD = {
+        [Enum.Material.DiamondPlate] = true,
+        [Enum.Material.Metal] = true,
+        [Enum.Material.CorrodedMetal] = true,
+        [Enum.Material.Concrete] = true,
+        [Enum.Material.Brick] = true,
+    }
+    PEN_SOFT = {
+        [Enum.Material.Wood] = true,
+        [Enum.Material.WoodPlanks] = true,
+        [Enum.Material.Fabric] = true,
+        [Enum.Material.Sand] = true,
+        [Enum.Material.Grass] = true,
+        [Enum.Material.LeafyGrass] = true,
+        [Enum.Material.Ground] = true,
+    }
+end)
+local function penCost(inst)
+    if not inst then return -1 end
+    local n = string.lower(inst.Name or "")
+    if string.find(n, "nowallbang", 1, true) then return -1 end
+    local okT, tr = pcall(function() return inst.Transparency end)
+    local okC, cc = pcall(function() return inst.CanCollide end)
+    if (okC and cc == false) or (okT and tr and tr >= 0.99) then return 0 end
+    if string.find(n, "glass", 1, true) or string.find(n, "cardboard", 1, true) or string.find(n, "grate", 1, true) then return 0.5 end
+    local okM, m = pcall(function() return inst.Material end)
+    if okM and m then
+        if PEN_HARD[m] then return -1 end
+        if PEN_SOFT[m] then return 0.1 end
+    end
+    local okP, pv = pcall(function() return inst:GetAttribute("PeneValue") end)
+    if okP and type(pv) == "number" and pv >= 0 then return pv end
+    return -1
+end
+local function penExit(inst, pos, u)
+    local ok, back = pcall(function()
+        local bp = RaycastParams.new()
+        bp.FilterType = Enum.RaycastFilterType.Include
+        bp.FilterDescendantsInstances = { inst }
+        return Workspace:Raycast(pos + u * 12, -u * 24, bp)
+    end)
+    if ok and back then return o3(back.Position), o3(back.Normal or -u) end
+    return o3(pos), o3(-u)
+end
+local function los(a, b, penOverride)
+    local usePen = C.CFG.PenCheck
+    if penOverride ~= nil then usePen = penOverride and true or false end
     if smokeBlock(a, b) then return false end
     local d = b - a
     local dist = d.Magnitude
@@ -409,41 +462,91 @@ local function los(a, b)
     local u = d.Unit
     local cur = a
     local rem = dist
-    local g = 0
-    while rem > 0.1 and g < 24 do
-        g = g + 1
-        local res = Workspace:Raycast(cur, u * rem, rp)
-        if not res then return true end
+    local params = rp
+    local extra = nil
+    local budget = 1
+    local pen = nil
+    for step = 1, 4 do
+        local res = Workspace:Raycast(cur, u * rem, params)
+        if not res then return true, pen end
         local inst = res.Instance
         if inst:IsA("Terrain") then return false end
-        local ok, solid = pcall(function() return inst.CanCollide end)
-        if ok and solid then return false end
+        if (res.Position - b).Magnitude < 0.8 then return true, pen end
+        if inst.Parent and inst.Parent:FindFirstChildOfClass("Humanoid") then return true, pen end
         if smokeName(inst) then return false end
-        if (res.Position - b).Magnitude < 0.8 then return true end
+        local cost = penCost(inst)
+        local allow
+        if usePen then
+            allow = cost >= 0 and cost <= budget
+        else
+            local okC, cc = pcall(function() return inst.CanCollide end)
+            local okT, tr = pcall(function() return inst.Transparency end)
+            allow = (okC and cc == false) or (okT and tr and tr >= 0.99)
+        end
+        if not allow then return false end
+        if cost > 0 then budget = budget - cost end
+        if usePen then
+            local ep, en = penExit(inst, res.Position, u)
+            pen = {
+                Wallbang = true,
+                Ratio = math.clamp(budget, 0, 1),
+                Endposition = ep,
+                Endnormal = en,
+            }
+        end
+        if not extra then
+            extra = {}
+            for _, x in ipairs(rp.FilterDescendantsInstances) do extra[#extra + 1] = x end
+        end
+        extra[#extra + 1] = inst
+        local np = RaycastParams.new()
+        np.FilterType = Enum.RaycastFilterType.Exclude
+        np.IgnoreWater = true
+        np.RespectCanCollide = false
+        np.FilterDescendantsInstances = extra
+        params = np
         local st = (res.Position - cur).Magnitude + 0.15
         cur = cur + u * st
         rem = rem - st
+        if rem <= 0.1 then return true, pen end
     end
-    return true
+    return false
+end
+
+local function targetKey(p)
+    return p.Name .. " [" .. tostring(team(p) or "无队伍") .. "]"
 end
 
 local function scan()
     local mr = myRoot()
     if not mr then return nil, nil end
     local mp = mr.Position
-    local near, nd = nil, math.huge
-    local vis, vd = nil, math.huge
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= C.lp and valid(p) and enemy(p) and not (C._targetFilter and C._blockedTargets[p]) then
-            local part, pos = tpart(p)
-            if part and not smokeBlock(mp, pos) then
-                local d = (pos - mp).Magnitude
-                if d < nd then nd = d; near = { Player = p, Part = part, Pos = pos, Dist = d } end
-                if d < vd and los(mp, pos) then vd = d; vis = { Player = p, Part = part, Pos = pos, Dist = d } end
+    local function gather(onlyPicked)
+        local near, nd = nil, math.huge
+        local vis, vd = nil, math.huge
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= C.lp and valid(p) and enemy(p) then
+                if not onlyPicked or C._picked[targetKey(p)] then
+                    local part, pos = tpart(p)
+                    if part and not smokeBlock(mp, pos) then
+                        local d = (pos - mp).Magnitude
+                        if d < nd then nd = d; near = { Player = p, Part = part, Pos = pos, Dist = d } end
+                        if d < vd then
+                            local okv, penv = los(mp, pos)
+                            if okv then vd = d; vis = { Player = p, Part = part, Pos = pos, Dist = d, Pen = penv } end
+                        end
+                    end
+                end
             end
         end
+        return near, vis
     end
-    return near, vis
+    if next(C._picked) then
+        local n, v = gather(true)
+        if n or v then return n, v end
+    end
+    if C._selAll then return gather(false) end
+    return nil, nil
 end
 local function target()
     if C.TRACK and C.TRACK.Enabled and C._trkTarget then
@@ -698,16 +801,20 @@ local function buildHit(t, cp)
     local part = t.Part
     local hp = part.Position
     local dir = (hp - cp).Unit
+    local pen = t.Pen
     return {
         Hit = part.Parent, PartName = part.Name, Position = o3(hp), Normal = o3(-dir),
         hS = part.Size.Magnitude, hP = o3(hp), cCF = CFrame.lookAt(cp, hp),
-        Headshot = (part.Name == "Head"), Wallbang = false, Ratio = 1,
-        Endposition = o3(hp), Endnormal = o3(-dir),
+        Headshot = (part.Name == "Head"),
+        Wallbang = pen ~= nil,
+        Ratio = pen and pen.Ratio or 1,
+        Endposition = pen and pen.Endposition or o3(hp),
+        Endnormal = pen and pen.Endnormal or o3(-dir),
     }
 end
 local function liveLock()
     local t = C._trkTarget
-    if not (C.TRACK.Enabled and C.TRACK.Hijack and t) then return nil end
+    if not (C.TRACK.Enabled and t) then return nil end
     if not (t.Player and t.Player.Parent and t.Part and t.Part.Parent) then return nil end
     local ok = pcall(function() return t.Part.Position end)
     if not ok then return nil end
@@ -1245,17 +1352,13 @@ local function spin(dt)
     mr.AssemblyLinearVelocity = v
 end
 
-local function targetKey(p)
-    return p.Name .. " [" .. tostring(team(p) or "无队伍") .. "]"
-end
 local function targetOptions()
-    local t = {}
+    local t = { "ALL" }
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= C.lp and valid(p) and enemy(p) then
             t[#t + 1] = targetKey(p)
         end
     end
-    if #t == 0 then t[1] = "暂无目标" end
     return t
 end
 
@@ -1322,11 +1425,11 @@ local function trackPick()
                     local dx, dy = sp.X - ctr.X, sp.Y - ctr.Y
                     local d = math.sqrt(dx * dx + dy * dy)
                     if d <= r and d < bd then
-                        local vis = true
-                        if C.TRACK.RayCheck then vis = los(mp, pos) end
+                        local vis, pen = true, nil
+                        if C.TRACK.RayCheck then vis, pen = los(mp, pos, C.TRACK.PenCheck) end
                         if vis then
                             bd = d
-                            best = { Player = p, Part = part, Pos = pos, Dist = (pos - mp).Magnitude, SD = d }
+                            best = { Player = p, Part = part, Pos = pos, Dist = (pos - mp).Magnitude, SD = d, Pen = pen }
                         end
                     end
                 end
@@ -1341,6 +1444,13 @@ local function updateTrack(dt)
         if C._lockFrame then C._lockFrame.Visible = false end
         C._trkTarget = nil
         return
+    end
+    if not C._shotHooked then
+        C._hookT = C._hookT + dt
+        if C._hookT >= 1 then
+            C._hookT = 0
+            installShotHook()
+        end
     end
     if not ensureTrackGui() then return end
     applyPov()
@@ -1393,36 +1503,37 @@ L:AddToggle("defRay", {
     Default = false,
     Callback = function(v) C.CFG.RayCheck = v end,
 })
+L:AddToggle("defPen", {
+    Text = "穿透检查",
+    Default = false,
+    Callback = function(v) C.CFG.PenCheck = v end,
+})
 
 C._targetSel = L:AddDropdown("defTargets", {
     Text = "目标选择",
     Values = targetOptions(),
-    Default = {},
+    Default = { ["ALL"] = true },
     Multi = true,
     Callback = function(Values)
-        C._blockedTargets = {}
-        if not C._targetFilter then return end
-        local has = false
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= C.lp and Values and Values[targetKey(p)] then has = true end
-        end
-        if not has then return end
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= C.lp and not (Values and Values[targetKey(p)]) then
-                C._blockedTargets[p] = true
+        local picked, all = {}, false
+        if type(Values) == "table" then
+            for k, on in pairs(Values) do
+                if type(k) == "number" and type(on) == "string" then
+                    k, on = on, true
+                end
+                if on == true or (type(on) == "string" and on == k) then
+                    if k == "ALL" then all = true
+                    elseif type(k) == "string" then picked[k] = true end
+                end
             end
         end
+        C._picked = picked
+        C._selAll = all
     end,
 })
-
-L:AddToggle("defTargetOn", {
-    Text = "攻击选择目标",
-    Default = false,
-    Callback = function(v)
-        C._targetFilter = v
-        if not v then C._blockedTargets = {} end
-    end,
-})
+pcall(function() C._targetSel:SetValue({ ["ALL"] = true }) end)
+C._picked = {}
+C._selAll = true
 
 L:AddToggle("defTeam", {
     Text = "队伍检查",
@@ -1587,10 +1698,12 @@ TK:AddToggle("defTrackOn", {
             ensureTrackGui()
             applyPov()
             if C._povFrame then C._povFrame.Visible = true end
-            if C.TRACK.Hijack then installShotHook() end
-        elseif C._povFrame then
-            C._povFrame.Visible = false
+            C._hookT = 0
+            installShotHook()
+        else
+            if C._povFrame then C._povFrame.Visible = false end
             if C._lockFrame then C._lockFrame.Visible = false end
+            restoreShotHook()
         end
     end,
 })
@@ -1598,6 +1711,11 @@ TK:AddToggle("defTrackRay", {
     Text = "射线检测",
     Default = false,
     Callback = function(v) C.TRACK.RayCheck = v end,
+})
+TK:AddToggle("defTrackPen", {
+    Text = "穿透检查",
+    Default = false,
+    Callback = function(v) C.TRACK.PenCheck = v end,
 })
 TK:AddToggle("defTrackTeam", {
     Text = "队伍检查",
@@ -1613,15 +1731,6 @@ TK:AddSlider("defTrackPov", {
         applyPov()
     end,
 })
-TK:AddToggle("defTrackHijack", {
-    Text = "劫持射线",
-    Default = false,
-    Callback = function(v)
-        C.TRACK.Hijack = v
-        if v then installShotHook() else restoreShotHook() end
-    end,
-})
-
 C._slGui = Instance.new("ScreenGui")
 C._slGui.Name = "defense_status"
 C._slGui.ResetOnSpawn = false
@@ -1650,12 +1759,24 @@ local function refreshTargetOptions()
         local v = C._targetSel.Value
         if type(v) == "table" then
             for k, on in pairs(v) do
-                if on then keep[k] = true end
+                if type(k) == "number" and type(on) == "string" then k, on = on, true end
+                if on == true or (type(on) == "string" and on == k) then keep[k] = true end
             end
         end
     end)
-    pcall(function() C._targetSel:SetValues(targetOptions()) end)
-    pcall(function() C._targetSel:SetValue(keep) end)
+    if next(keep) == nil then
+        for k in pairs(C._picked) do keep[k] = true end
+        if C._selAll then keep["ALL"] = true end
+    end
+    local opts = targetOptions()
+    local allowed = {}
+    for _, k in ipairs(opts) do allowed[k] = true end
+    local clean = {}
+    for k in pairs(keep) do
+        if allowed[k] then clean[k] = true end
+    end
+    pcall(function() C._targetSel:SetValues(opts) end)
+    pcall(function() C._targetSel:SetValue(clean) end)
 end
 
 local function hookChar(p)
@@ -1674,7 +1795,7 @@ Players.PlayerAdded:Connect(function(p)
 end)
 Players.PlayerRemoving:Connect(function(p)
     removeESP(p)
-    C._blockedTargets[p] = nil
+    C._picked[targetKey(p)] = nil
 end)
 
 RunService.RenderStepped:Connect(function(dt)
@@ -1700,24 +1821,29 @@ RunService.RenderStepped:Connect(function(dt)
     local live = canFire()
     local pn = phaseName() .. (C.CFG.AutoJump and live and " · 连跳" or "")
         .. (C.CFG.AntiBan and (" · 防封 " .. (C._abInfo or "关")) or "")
-        .. (C.TRACK.Enabled and (" · 追踪 " .. (C.TRACK.Hijack and (C._shotState or "关") or "仅锁定")) or "")
+        .. (C.TRACK.Enabled and (" · 追踪 " .. (C._shotState or "关")) or "")
     local aa = C.CFG.Spin and (C.SPIN.Dir .. " " .. C.SPIN.Speed) or "关"
     local pit = C.CFG.HeadCtrl and C.HEAD.Mode or "关"
-    local wl = (C._targetFilter and "开" or "关") .. " | 俯仰 " .. pit
+    local wl = (function()
+        local n = 0
+        for _ in pairs(C._picked) do n = n + 1 end
+        if n > 0 then return "指定 " .. n .. (C._selAll and " + ALL" or "") end
+        return C._selAll and "ALL" or "空"
+    end)() .. " | 俯仰 " .. pit
     if not C.CFG.Enabled then
-        setSl(string.format("系统 // %s\n待机 | 敌 %d | 烟 %d\n名单 %s | 自旋 %s",
+        setSl(string.format("系统 // %s\n待机 | 敌 %d | 烟 %d\n目标 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, wl, aa))
         return
     end
     if not selfAlive() then
         C._lastFire = 0
         C._dLast = 0
-        setSl(string.format("系统 // %s\n已阵亡 | 敌 %d | 烟 %d\n名单 %s | 自旋 %s",
+        setSl(string.format("系统 // %s\n已阵亡 | 敌 %d | 烟 %d\n目标 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, wl, aa))
         return
     end
     if not live then
-        setSl(string.format("系统 // %s\n阶段锁定 | 敌 %d | 烟 %d\n名单 %s | 自旋 %s",
+        setSl(string.format("系统 // %s\n阶段锁定 | 敌 %d | 烟 %d\n目标 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, wl, aa))
         return
     end
@@ -1727,13 +1853,13 @@ RunService.RenderStepped:Connect(function(dt)
     end
     local t = target()
     if not t then
-        setSl(string.format("系统 // %s\n无锁定 | 敌 %d | 烟 %d\n名单 %s | 自旋 %s",
+        setSl(string.format("系统 // %s\n无锁定 | 敌 %d | 烟 %d\n目标 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, wl, aa))
         return
     end
     local w = curWeapon()
     if not w then
-        setSl(string.format("系统 // %s\n非枪械 | 敌 %d | 烟 %d\n名单 %s | 自旋 %s",
+        setSl(string.format("系统 // %s\n非枪械 | 敌 %d | 烟 %d\n目标 %s | 自旋 %s",
             pn, countEnemy(), #C._smoke, wl, aa))
         return
     end
@@ -1742,7 +1868,7 @@ RunService.RenderStepped:Connect(function(dt)
         C._lastFire = now
         fireAt(t)
     end
-    setSl(string.format("系统 // %s\n锁定 %s %d米 | 敌 %d\n烟 %d | 名单 %s | 自旋 %s",
+    setSl(string.format("系统 // %s\n锁定 %s %d米 | 敌 %d\n烟 %d | 目标 %s | 自旋 %s",
         pn, t.Player.Name, math.floor(t.Dist), countEnemy(), #C._smoke, wl, aa))
 end)
 
@@ -1767,10 +1893,10 @@ refreshESP()
 
 local function unload()
     restoreShotHook()
-    C.TRACK.Hijack = false
     C.CFG.HeadCtrl = false
     C.CFG.ThirdPerson = false
     C.TRACK.Enabled = false
+    C.TRACK.PenCheck = false
     C._trkTarget = nil
     if C._trkGui then C._trkGui:Destroy(); C._trkGui = nil end
     C._povFrame = nil
